@@ -1,0 +1,9 @@
+.ipynb_checkpoints
+.vscode
+__pycache__
+images
+models
+runs
+smc_env
+
+*.swp
