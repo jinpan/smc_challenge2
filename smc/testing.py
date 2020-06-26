@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torchvision
 import tqdm
 
+from . import statistics
 from . import utils
 
 
@@ -29,10 +30,16 @@ def _make_tensor_for_test(img, angle):
 
 def test_combined_bicubic(
     img_path, model, label_manager,
-    filedir='valid', rotate_deg=5, topk=None):
+    filedir='valid', rotate_deg=5, topk=None,
+    mean_and_std=None):
 
   if topk is None:
     topk = min(5, label_manager.num_classes-1)
+
+  if mean_and_std is None:
+    normalize_fn = lambda t: t
+  else:
+    normalize_fn = mean_and_std.to_transform_normalize()
 
   grouped_filenames = collections.defaultdict(list)
   group_to_spacegroup = {}
@@ -65,7 +72,9 @@ def test_combined_bicubic(
           futures.append(f)
       tensors = []
       for f in concurrent.futures.as_completed(futures):
-        tensors.append(f.result())
+        tensor = f.result()
+        tensor = normalize_fn(tensor)
+        tensors.append(tensor)
 
       model.eval()
       with torch.no_grad():

@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import torchvision
 import tqdm
 
+from . import statistics
 from . import utils
 
 
@@ -153,7 +154,11 @@ class CbedDataset(torch.utils.data.Dataset):
 
 
 class CbedData:
-  def __init__(self, img_path, batch_size, num_workers=None, chans='L'):
+  def __init__(self,
+      img_path, batch_size,
+      chans='L', mean_and_std=statistics.IMG9_stats,
+      num_workers=None,
+    ):
     self.img_path = pathlib.Path(img_path)
 
     self.label_manager = LabelManager()
@@ -165,11 +170,10 @@ class CbedData:
 
     # TODO: normalize with mean_and_std
     '''
-    if str(self.img_path).endswith('/img9'):
-      assert mean_and_std == (0.0474, 0.0547)
+    if self.img_path.name in ('img9', 'img12'):
+      assert mean_and_std == statistics.IMG9_stats
     else:
       print(f"Warning: using mean_and_std {mean_and_std}, which is based on img9")
-    mean, std = mean_and_std
     '''
 
     image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
@@ -182,6 +186,7 @@ class CbedData:
             torchvision.transforms.RandomHorizontalFlip(),
             torchvision.transforms.RandomRotation(360., resample=PIL.Image.BICUBIC),
             torchvision.transforms.ToTensor(),
+            # mean_and_std.to_transform_normalize(),
             torchvision.transforms.RandomErasing(p=0.8),
         ],
     ))
@@ -192,6 +197,7 @@ class CbedData:
         image_loader_fn,
         transform=torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
+            # mean_and_std.to_transform_normalize(),
         ],
     ))
 
@@ -214,7 +220,7 @@ class CbedData:
     train_set = self._train_set
 
     count_by_label_id = torch.zeros(self.label_manager.num_classes)
-    for label_id, count in collections.Counter(train_set._labels).items():
+    for label_id, count in collections.Counter(train_set._image_cache._labels).items():
       count_by_label_id[label_id] = float(count)
     assert min(count_by_label_id) > 0
 
