@@ -7,6 +7,7 @@ import torch
 from torch import nn
 import torchvision
 
+from . import data
 from . import utils
 
 
@@ -298,7 +299,16 @@ def get_linear_mods(model):
 
 
 @utils.defer
-def lsuv(model, xb, iterations=2, verbose=False, _defer=None):
+def lsuv(model, dat, iterations=2, verbose=False, _defer=None):
+  # dat is data.CbedData or a tensor batch.
+  if isinstance(dat, data.CbedData):
+    dat, _ = next(iter(dat.train_loader))
+    dat = dat.to(next(model.parameters()).device)
+  assert isinstance(dat, torch.Tensor)
+  assert len(dat.shape) == 4
+  assert len(dat.shape[0]) >= 1000
+  assert len(dat.shape[1]) == 1
+
   ctx = LSUV_Context(verbose=verbose)
 
   for m in get_linear_mods(model):
@@ -309,7 +319,7 @@ def lsuv(model, xb, iterations=2, verbose=False, _defer=None):
   with torch.no_grad():
     for _ in range(iterations):
       ctx.next_iteration()
-      model(xb)
+      model(dat)
 
   ctx.summarize()
 
