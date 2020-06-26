@@ -306,8 +306,8 @@ def lsuv(model, dat, iterations=2, verbose=False, _defer=None):
     dat = dat.to(next(model.parameters()).device)
   assert isinstance(dat, torch.Tensor)
   assert len(dat.shape) == 4
-  assert len(dat.shape[0]) >= 1000
-  assert len(dat.shape[1]) == 1
+  assert dat.shape[0] >= 1000
+  assert dat.shape[1] == 1
 
   ctx = LSUV_Context(verbose=verbose)
 
