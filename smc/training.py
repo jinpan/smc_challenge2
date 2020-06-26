@@ -103,6 +103,8 @@ class Trainer:
   opt: typing.Optional[torch.optim.Optimizer] = None
   opt_sched: typing.Optional[torch.optim.lr_scheduler._LRScheduler] = None
 
+  run_validation: bool = True
+
   def save(self):
     with open(f"{self.save_filename}.model", 'xb') as f:
       torch.save(self.model.state_dict(), f)
@@ -141,8 +143,9 @@ class Trainer:
         self.model.train()
         self.train_epoch(tbw, epoch)
 
-        self.model.eval()
-        self.validate(tbw, epoch)
+        if self.run_validation:
+          self.model.eval()
+          self.validate(tbw, epoch)
 
     self.save()
 
