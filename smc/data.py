@@ -11,6 +11,7 @@ import PIL
 import torch
 import torch.nn.functional as F
 import torchvision
+import tqdm
 
 from . import utils
 
@@ -96,13 +97,12 @@ class LabelManager:
     return inst
 
 
-class CbedDataset(torch.utils.data.Dataset):
+class CbedImageCacheDataset(torch.utils.data.Dataset):
   _spacegroup_re = re.compile(r'.*\.(\d{1,3})\.png$')
 
-  def __init__(self, root, label_manager, transform):
-    self._filenames = []
+  def __init__(self, root, label_manager, image_loader_fn):
+    self._images = []
     self._labels = []
-    self._transform = transform
 
     raw_labels = []
     filenames = []
@@ -114,21 +114,42 @@ class CbedDataset(torch.utils.data.Dataset):
       raw_labels.append(m.group(1))
 
     mappings = label_manager.get_label_mappings(set(raw_labels))
-    for filename, raw_label in utils.zip_eq(filenames, raw_labels):
-      label = mappings.get(raw_label)
-      if label is None: continue
 
-      self._filenames.append(filename)
+    dropped_labels = set()
+    it = tqdm.tqdm(utils.zip_eq(filenames, raw_labels), total=len(filenames))
+    for filename, raw_label in it:
+      label = mappings.get(raw_label)
+      if label is None:
+        dropped_labels.add(label)
+        continue
+
+      image = image_loader_fn(filename)
+      self._images.append(image)
       self._labels.append(label)
 
-  def __getitem__(self, idx):
-    filename = self._filenames[idx]
-    label = self._labels[idx]
+    if dropped_labels:
+      print(f"WARNING: Dropped these labels: {dropped_labels}")
 
-    return self._transform(filename), label
+  def __getitem__(self, idx):
+    return self._images[idx], self._labels[idx]
 
   def __len__(self):
-    return len(self._filenames)
+    return len(self._images)
+
+
+class CbedDataset(torch.utils.data.Dataset):
+  def __init__(self, root, label_manager, image_loader_fn, transform):
+    self._image_cache = CbedImageCacheDataset(
+        root, label_manager, image_loader_fn)
+
+    self._transform = transform
+
+  def __getitem__(self, idx):
+    image, label = self._image_cache[idx]
+    return self._transform(image), label
+
+  def __len__(self):
+    return len(self._image_cache)
 
 
 class CbedData:
@@ -136,6 +157,11 @@ class CbedData:
     self.img_path = pathlib.Path(img_path)
 
     self.label_manager = LabelManager()
+
+    if num_workers is None:
+      # number of cpus available to the current process
+      num_workers = len(os.sched_getaffinity(0))
+    self._num_workers = num_workers
 
     # TODO: normalize with mean_and_std
     '''
@@ -146,9 +172,13 @@ class CbedData:
     mean, std = mean_and_std
     '''
 
+    image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
+
     self._train_set = CbedDataset(
-        self.img_path/'train', self.label_manager, transform=torchvision.transforms.Compose([
-            torchvision.transforms.Lambda(lambda fn: PIL.Image.open(fn).convert(chans)),
+        self.img_path/'train',
+        self.label_manager,
+        image_loader_fn,
+        transform=torchvision.transforms.Compose([
             torchvision.transforms.RandomHorizontalFlip(),
             torchvision.transforms.RandomRotation(360., resample=PIL.Image.BICUBIC),
             torchvision.transforms.ToTensor(),
@@ -157,30 +187,28 @@ class CbedData:
     ))
     self.label_manager.freeze()
     self._valid_set = CbedDataset(
-        self.img_path/'valid', self.label_manager, transform=torchvision.transforms.Compose([
-            torchvision.transforms.Lambda(lambda fn: PIL.Image.open(fn).convert(chans)),
+        self.img_path/'valid',
+        self.label_manager,
+        image_loader_fn,
+        transform=torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
         ],
     ))
-
-    if num_workers is None:
-      # number of cpus available to the current process
-      num_workers = len(os.sched_getaffinity(0))
 
     self.train_loader = torch.utils.data.DataLoader(
         self._train_set,
         batch_size=batch_size,
         shuffle=True,
         pin_memory=True,
-        num_workers=num_workers,
+        num_workers=self._num_workers,
     )
-
     self.valid_loader = torch.utils.data.DataLoader(
         self._valid_set,
         batch_size=batch_size,
         pin_memory=True,
         # don't set num_workers since we do minimal transformations on the validation set.
     )
+
 
   def make_cross_entropy_weights(self):
     train_set = self._train_set
