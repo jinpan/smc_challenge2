@@ -1,3 +1,4 @@
+import functools
 import math
 import random
 
@@ -28,6 +29,18 @@ def rotate(images_t, angles_rad):
 
   return images_t
 
+# Based on https://towerbabbel.com/go-defer-in-python/
+def defer(func):
+  @functools.wraps(func)
+  def func_wrapper(*args, **kwargs):
+    deferred = []
+    def _defer_handler(f, *a, **kw): deferred.append((f, a, kw))
+    try:
+      return func(*args, _defer=_defer_handler, **kwargs)
+    finally:
+      for fn, a, kw in reversed(deferred): fn(*a, **kw)
+  return func_wrapper
+
 
 def must_match(regex, string):
   m = regex.match(string)
@@ -41,8 +54,8 @@ def imshow(image_t, ax=None, vmin=-3, vmax=3):
 
   ax = ax or plt.gca()
 
-  if np.img.shape[0] == 1:
-    imshow_img = np.img[0]
+  if np_img.shape[0] == 1:
+    imshow_img = np_img[0]
   else:
     imshow_img = np.transpose(np_img, (1, 2, 0))
 
@@ -65,7 +78,7 @@ def zip_eq(a, b):
       next_b_ok = True
     except StopIteration:
       next_b_ok = False
-    
+
     if next_a_ok and next_b_ok:
       yield (next_a, next_b)
     elif not next_a_ok and not next_b_ok:

@@ -1,6 +1,14 @@
+import dataclasses
+import functools
+import typing
+
+import numpy as np
 import torch
 from torch import nn
 import torchvision
+
+from . import utils
+
 
 # Much of this module is from torchvision.models.resnet, modified for single
 # channel images
@@ -220,3 +228,89 @@ def make_resnet50_1chan(num_classes=1000, dropout=None):
   maybe_apply_dropout(model, dropout)
 
   return model
+
+
+###############################################################################
+# LSUV
+###############################################################################
+
+@dataclasses.dataclass
+class LSUV_Context:
+  verbose: bool = False
+  std_eps: float = 1e-8
+  means: typing.List[float] = dataclasses.field(default_factory=list)
+  stds: typing.List[float] = dataclasses.field(default_factory=list)
+
+  iteration: int = dataclasses.field(default=-1, init=False)
+
+  def next_iteration(self):
+    self.iteration += 1
+    self.means.append([])
+    self.stds.append([])
+    if self.verbose: print('=' * 80)
+
+  def add_mean_std(self, mean, std):
+    self.means[self.iteration].append(mean)
+    self.stds[self.iteration].append(std)
+
+  def summarize(self):
+    print(f"Ran {self.iteration+1} iterations on {len(self.means[0])} layers:")
+    for i, (means, stds) in enumerate(utils.zip_eq(self.means, self.stds)):
+      print(
+          f"it {i}: "
+          f"avg mean: {np.mean(means):+0.2f} "
+          f"std mean: {np.std(means):+0.2f} "
+          f"fin mean: {means[-1]:+0.2f}"
+      )
+      print(
+          f"      "
+          f"avg std : {np.mean(stds):+0.2f} "
+          f"std std : {np.std(stds):+0.2f} "
+          f"fin std : {stds[-1]:+0.2f}"
+      )
+
+  def hook(self):
+    def _hook(m, _input, out):
+      mean, std = out.mean().item(), out.std().item()
+      self.add_mean_std(mean, std)
+
+      if self.verbose: print(f"{type(m).__name__} | mean: {mean:0.2f} | std: {std:0.2f}")
+
+      assert isinstance(m.weight, torch.Tensor)
+      m.weight.mul_(1. / (std + self.std_eps))
+
+      has_bias = getattr(m, 'bias') is not None
+      if has_bias:
+        m.bias.sub_(mean)
+    return _hook
+
+
+def get_linear_mods(model):
+  linear_layers = (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.Linear)
+
+  stack = [model]
+  while stack:
+    m = stack.pop(0)
+    if isinstance(m, linear_layers):
+      yield m
+    else:
+      stack.extend(m.children())
+
+
+@utils.defer
+def lsuv(model, xb, iterations=2, verbose=False, _defer=None):
+  ctx = LSUV_Context(verbose=verbose)
+
+  for m in get_linear_mods(model):
+    handle = m.register_forward_hook(ctx.hook())
+    _defer(lambda h: h.remove(), handle)
+
+  model.train()
+  with torch.no_grad():
+    for _ in range(iterations):
+      ctx.next_iteration()
+      model(xb)
+
+  ctx.summarize()
+
+  return ctx

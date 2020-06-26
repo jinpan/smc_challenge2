@@ -134,7 +134,7 @@ class Trainer:
           steps_per_epoch=len(self.cbed_data.train_loader), epochs=epochs)
 
     with torch.utils.tensorboard.SummaryWriter(comment=f"__{self.comment}") as tbw:
-      print(f"Logging to {tbw.log_dir}")
+      print(f"Logging to {tbw.log_dir}", flush=True)
       tbw.add_text('desc', self.description)
       if self.save_filename:
         tbw.add_text('save', self.save_filename)
