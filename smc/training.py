@@ -1,6 +1,9 @@
 import dataclasses
+import os
+import pathlib
 import pickle
 import typing
+import time
 
 import torch
 import torch.utils.tensorboard
@@ -99,27 +102,39 @@ class Trainer:
   model: nn.Module
   loss_fn: typing.Callable
 
-  save_filename: str=''
+  save_filedir: str = dataclasses.field(
+      default_factory=lambda: f"models/{int(time.time())}",
+  )
   opt: typing.Optional[torch.optim.Optimizer] = None
   opt_sched: typing.Optional[torch.optim.lr_scheduler._LRScheduler] = None
 
   run_validation: bool = True
 
+  def __post_init__(self):
+    os.mkdir(self.save_filedir)
+
   def save(self):
-    with open(f"{self.save_filename}.model", 'xb') as f:
+    now = int(time.time())
+
+    with open(f"{self.save_filedir}/{now}.model", 'xb') as f:
       torch.save(self.model.state_dict(), f)
-    with open(f"{self.save_filename}.label_manager", 'xb') as f:
+    with open(f"{self.save_filedir}/{now}.label_manager", 'xb') as f:
       torch.save(self.cbed_data.label_manager.state_dict(), f)
     if self.opt:
-      with open(f"{self.save_filename}.opt", 'xb') as f:
+      with open(f"{self.save_filedir}/{now}.opt", 'xb') as f:
         torch.save(self.opt.state_dict(), f)
 
 
   @classmethod
-  def load(self, model, save_filename):
-    with open(f"{save_filename}.model", 'rb') as f:
+  def load(self, model, save_filedir, timestamp=None):
+    if timestamp is None:
+      filenames = list(pathlib.Path(save_filedir).glob('*.model'))
+      assert len(filenames) == 1
+      timestamp, _ = filenames[0].name.split('.')
+
+    with open(f"{save_filedir}/{timestamp}.model", 'rb') as f:
       model.load_state_dict(torch.load(f))
-    with open(f"{save_filename}.label_manager", 'rb') as f:
+    with open(f"{save_filedir}/{timestamp}.label_manager", 'rb') as f:
       label_manager = data.LabelManager.load(torch.load(f))
 
     return label_manager
@@ -134,10 +149,9 @@ class Trainer:
           steps_per_epoch=len(self.cbed_data.train_loader), epochs=epochs)
 
     with torch.utils.tensorboard.SummaryWriter(comment=f"__{self.comment}") as tbw:
-      print(f"Logging to {tbw.log_dir}", flush=True)
+      print(f"Logging to {tbw.log_dir}; saving to {self.save_filedir}", flush=True)
       tbw.add_text('desc', self.description)
-      if self.save_filename:
-        tbw.add_text('save', self.save_filename)
+      tbw.add_text('save', self.save_filedir)
 
       for epoch in tqdm.tqdm(range(epochs)):
         self.model.train()
