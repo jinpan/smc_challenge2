@@ -62,6 +62,10 @@ def imshow(image_t, ax=None, vmin=-3, vmax=3):
   ax.imshow(imshow_img, cmap='gray', vmin=vmin, vmax=vmax)
 
 
+def lin_comb(a, b, alpha):
+  return alpha * a + (1-alpha) * b
+
+
 def zip_eq(a, b):
   it_a = iter(a)
   it_b = iter(b)

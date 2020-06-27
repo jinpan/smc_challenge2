@@ -11,6 +11,7 @@ from torch import nn
 import tqdm
 
 from . import data
+from . import utils
 
 # Based on https://github.com/cybertronai/pytorch-lamb/blob/master/pytorch_lamb/lamb.py
 # MIT license
@@ -109,6 +110,7 @@ class Trainer:
   opt_sched: typing.Optional[torch.optim.lr_scheduler._LRScheduler] = None
 
   run_validation: bool = True
+  use_mixup: bool = False
 
   def __post_init__(self):
     os.mkdir(self.save_filedir)
@@ -167,20 +169,50 @@ class Trainer:
     losses = []
 
     for xb, yb in self.cbed_data.train_loader:
-      xb, yb = xb.cuda(), yb.cuda()
-
-      preds = self.model(xb)
-      loss = self.loss_fn(preds, yb)
+      loss = self.train_batch(xb.cuda(), yb.cuda())
       losses.append(loss)
-      loss.backward()
-
-      self.opt.step()
-      self.opt.zero_grad()
-
-      self.opt_sched.step()
 
     tbw.add_scalar('Loss/train', torch.stack(losses).mean().item(), epoch)
 
+  def train_batch(self, xb, yb):
+    loss = self.compute_loss(xb, yb)
+    loss.backward()
+
+    self.opt.step()
+    self.opt.zero_grad()
+
+    self.opt_sched.step()
+
+    return loss
+
+  def compute_loss(self, xb, yb):
+    if not self.use_mixup:
+      preds = self.model(xb)
+      return self.loss_fn(preds, yb)
+    assert self.use_mixup
+
+    beta_dist = torch.distributions.beta.Beta(
+        torch.tensor([0.4]),
+        torch.tensor([0.4]),
+    )
+
+    batch_size = xb.size(0)
+    lam = beta_dist.sample((batch_size, )).squeeze(dim=1)  # |batch_size|
+    # lam = max(lam, 1-lam), to avoid possibilty of double-sampling
+    lam = torch.stack([lam, 1-lam], dim=1).max(dim=1).values  # |batch_size|
+    lam = lam[:, None, None, None].cuda()  # |batch_size| x |1| x |1| x |1|
+
+    shuffle = torch.randperm(batch_size).cuda()
+    mixed_xb = utils.lin_comb(xb, xb[shuffle], alpha=lam)
+    yb0, yb1 = yb, yb[shuffle]
+
+    preds = self.model(mixed_xb)
+    loss = utils.lin_comb(
+        self.loss_fn(preds, yb0, reduction='none'),
+        self.loss_fn(preds, yb1, reduction='none'),
+        alpha=lam,
+    ).mean()
+    return loss
 
   @torch.no_grad()
   def validate(self, tbw, epoch):
