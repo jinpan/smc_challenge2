@@ -101,9 +101,11 @@ class LabelManager:
 class CbedImageCacheDataset(torch.utils.data.Dataset):
   _spacegroup_re = re.compile(r'.*\.(\d{1,3})\.png$')
 
-  def __init__(self, root, label_manager, image_loader_fn):
+  def __init__(self, root, label_manager, image_loader_fn, lazy=True):
+    self._filenames = []
     self._images = []
     self._labels = []
+    self._image_loader_fn = image_loader_fn
 
     raw_labels = []
     filenames = []
@@ -117,22 +119,30 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
     mappings = label_manager.get_label_mappings(set(raw_labels))
 
     dropped_labels = set()
-    it = tqdm.tqdm(utils.zip_eq(filenames, raw_labels), total=len(filenames))
-    for filename, raw_label in it:
+    for filename, raw_label in utils.zip_eq(filenames, raw_labels):
       label = mappings.get(raw_label)
       if label is None:
         dropped_labels.add(raw_label)
         continue
 
-      image = image_loader_fn(filename)
-      self._images.append(image)
+      self._filenames.append(filename)
       self._labels.append(label)
+
+      if lazy:
+        img = None
+      else:
+        img = image_loader_fn(filename)
+      self._images.append(img)
 
     if dropped_labels:
       print(f"WARNING: Dropped these labels: {dropped_labels}")
 
   def __getitem__(self, idx):
-    return self._images[idx], self._labels[idx]
+    img = self._images[idx]
+    if img is None:
+      img = self._image_loader_fn(self._filenames[idx])
+      self._images[idx] = img
+    return img, self._labels[idx]
 
   def __len__(self):
     return len(self._images)
