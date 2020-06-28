@@ -108,7 +108,7 @@ class Bottleneck(nn.Module):
 class ResNet1Chan(nn.Module):
   def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                groups=1, width_per_group=20, replace_stride_with_dilation=None,
-               norm_layer=None):
+               norm_layer=None, use_333_input_conv=False):
     # changed width_per_group from 64 -> 20
     super().__init__()
     if norm_layer is None:
@@ -126,11 +126,22 @@ class ResNet1Chan(nn.Module):
                        "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
     self.groups = groups
     self.base_width = width_per_group
-    # changed initial input from 3->1
-    self.conv1 = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
-    self.bn1 = norm_layer(self.inplanes)
-    self.relu = nn.ReLU(inplace=True)
-    self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    # changed initial input from 3->1 (nn.Conv2d(3, ...) -> nn.Conv2d(1, ...))
+    if use_333_input_conv:  # resnet-C from bag of tricks paper
+      half_inplanes = self.inplanes // 2
+      input_conv = nn.Sequential(
+          nn.Conv2d(1, half_inplanes, kernel_size=3, stride=2, padding=1, bias=False),
+          nn.Conv2d(half_inplanes, half_inplanes, kernel_size=3, stride=1, padding=1, bias=False),
+          nn.Conv2d(half_inplanes, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False),
+      )
+    else:
+      input_conv = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+    self.input_stem = nn.Sequential(
+        input_conv,
+        norm_layer(self.inplanes),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+    )
 
     self.layer1 = self._make_layer(block, 20, layers[0])  # 64 -> 20
     self.layer2 = self._make_layer(block, 40, layers[1], stride=2,  # 128 -> 40
@@ -185,10 +196,7 @@ class ResNet1Chan(nn.Module):
 
   def _forward_impl(self, x):
     # See note [TorchScript super()]
-    x = self.conv1(x)
-    x = self.bn1(x)
-    x = self.relu(x)
-    x = self.maxpool(x)
+    x = self.input_stem(x)
 
     x = self.layer1(x)
     x = self.layer2(x)
@@ -224,8 +232,10 @@ def make_resnet34_1chan(num_classes=1000, dropout=None):
 
   return model
 
-def make_resnet50_1chan(num_classes=1000, dropout=None):
-  model = ResNet1Chan(Bottleneck, [3, 4, 6, 3], num_classes=num_classes)
+def make_resnet50_1chan(num_classes=1000, dropout=None, use_333_input_conv=False):
+  model = ResNet1Chan(
+      Bottleneck, [3, 4, 6, 3],
+      num_classes=num_classes, use_333_input_conv=use_333_input_conv)
   maybe_apply_dropout(model, dropout)
 
   return model
@@ -306,7 +316,6 @@ def lsuv(model, dat, iterations=2, verbose=False, _defer=None):
     dat = dat.to(next(model.parameters()).device)
   assert isinstance(dat, torch.Tensor)
   assert len(dat.shape) == 4
-  assert dat.shape[0] >= 1000
   assert dat.shape[1] == 1
 
   ctx = LSUV_Context(verbose=verbose)
