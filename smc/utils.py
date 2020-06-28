@@ -1,11 +1,15 @@
+import enum
 import functools
 import math
 import random
 
+import cv2
 from matplotlib import pyplot as plt
 import numpy as np
+import PIL
 import torch
 import torch.nn.functional as F
+import torchvision
 
 
 def set_seed(n):
@@ -13,21 +17,47 @@ def set_seed(n):
   torch.manual_seed(n)
 
 
-def rotate(images_t, angles_rad):
-  batch_size, _, _, _ = images_t.shape  # BS x C x H x W
-  assert len(angles_rad) == batch_size
+@enum.unique
+class RotationInterpolation(enum.Enum):
+  TORCH_BICUBIC = 1
+  OPENCV_CUBIC = 2
+  OPENCV_LANCZOS4 = 3
 
-  theta = torch.zeros(batch_size, 2, 3)
-  for i, angle_rad in enumerate(angles_rad):
-    alpha, beta = math.cos(angle_rad), math.sin(angle_rad)
 
-    theta[i][0][0], theta[i][0][1] = alpha, beta
-    theta[i][1][0], theta[i][1][1] = -beta, alpha
+def rotate(img, deg, rotation_interpolation):
+  if rotation_interpolation == RotationInterpolation.TORCH_BICUBIC:
+    return torchvision.transforms.functional.rotate(
+        img, deg, resample=PIL.Image.BICUBIC)
 
-  grid = F.affine_grid(theta=theta.cuda(), size=images_t.shape, align_corners=False)
-  images_t = F.grid_sample(images_t, grid, align_corners=False)
+  if rotation_interpolation in (
+      RotationInterpolation.OPENCV_CUBIC,
+      RotationInterpolation.OPENCV_LANCZOS4,
+  ):
+    flags = {
+        RotationInterpolation.OPENCV_CUBIC: cv2.INTER_CUBIC,
+        RotationInterpolation.OPENCV_LANCZOS4: cv2.INTER_LANCZOS4,
+    }[rotation_interpolation]
 
-  return images_t
+    w, h = img.size
+    cx, cy = w//2, h//2
+
+    cv2_img = np.array(img)
+    M = cv2.getRotationMatrix2D((cx, cy), angle=deg, scale=1.)
+    cv2_rot = cv2.warpAffine(cv2_img, M, (w, h), flags=flags)
+
+    return PIL.Image.fromarray(cv2_rot)
+
+  raise RuntimeError("Unhandled rotation interpolation")
+
+
+class RandomRotation:
+  def __init__(self, rotation_interpolation):
+    self._rotation_interpolation = rotation_interpolation
+
+  def __call__(self, img):
+    deg = int(360 * random.random())
+    return rotate(img, deg, self._rotation_interpolation)
+
 
 # Based on https://towerbabbel.com/go-defer-in-python/
 def defer(func):
