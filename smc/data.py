@@ -179,13 +179,17 @@ class CbedData:
 
     image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
 
+    print("NO FLIP; no rotation")
     self._train_set = CbedDataset(
         self.img_path/'train',
         self.label_manager,
         image_loader_fn,
         transform=torchvision.transforms.Compose([
-            torchvision.transforms.RandomHorizontalFlip(),
-            torchvision.transforms.RandomRotation(360., resample=PIL.Image.BICUBIC),
+            # torchvision.transforms.RandomHorizontalFlip(),
+            # torchvision.transforms.RandomRotation(360., resample=PIL.Image.BICUBIC),
+            # utils.RandomRotation(utils.RotationInterpolation.TORCH_BICUBIC),
+            # utils.RandomRotation(utils.RotationInterpolation.OPENCV_LANCZOS4),
+            # utils.RandomRotation(utils.RotationInterpolation.OPENCV_CUBIC),
             torchvision.transforms.ToTensor(),
             torchvision.transforms.RandomErasing(p=0.8),
         ],

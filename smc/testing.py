@@ -118,7 +118,9 @@ class CombinedBicubicTester:
 
   def __init__(self,
       img_path, label_manager,
-      filedir='valid', rotate_deg=5, topk=None):
+      filedir='valid',
+      rotate_deg=5, rotation_interpolation=utils.RotationInterpolation.TORCH_BICUBIC,
+      topk=None):
 
     grouped_filenames = collections.defaultdict(list)
     self._group_to_spacegroup = {}
@@ -131,6 +133,7 @@ class CombinedBicubicTester:
 
     self._label_manager = label_manager
     self._rotate_deg = rotate_deg
+    self._rotation_interpolation = rotation_interpolation
 
     if topk is None:
       topk = min(5, label_manager.num_classes-1)
@@ -151,7 +154,8 @@ class CombinedBicubicTester:
       tensors = []
       for img in images:
         for angle in range(0, 360, self._rotate_deg):
-          tensors.append(_make_tensor_for_test(img, angle))
+          img_r = utils.rotate(img, angle, self._rotation_interpolation)
+          tensors.append(torchvision.transforms.functional.to_tensor(img_r))
 
       out_q.put((group, torch.stack(tensors)))
 
