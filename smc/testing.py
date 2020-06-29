@@ -5,11 +5,13 @@ import gc
 import math
 import multiprocessing
 import os
+import pathlib
 import threading
 import queue
 import time
 import typing
 
+import pandas as pd
 import PIL
 import torch
 import torch.nn.functional as F
@@ -58,7 +60,7 @@ def test_combined_bicubic(
 
   grouped_filenames = dict(grouped_filenames)
 
-  num_correct = 0
+  num_correct, num_topk_correct = 0, 0
   outcomes = []
 
   with concurrent.futures.ProcessPoolExecutor() as exc:
@@ -90,25 +92,26 @@ def test_combined_bicubic(
         # Empirically, this does not work as well as the above.
         # argmax_topk = F.softmax(out, dim=1).log().mean(dim=0).topk(k=topk)
 
-      cat = label_manager.get_space_group(argmax_topk.indices[0])
-
-      if cat == space_group:
-        num_correct += 1
-
       topk_cats = []
       for idx in argmax_topk.indices:
         topk_cats.append(label_manager.get_space_group(idx))
 
+      if topk_cats[0] == space_group:
+        num_correct += 1
+      if space_group in topk_cats:
+        num_topk_correct += 1
+
       outcomes.append(PredictionOutcome(
           sample=group,
           actual=space_group,
-          predicted=cat,
+          predicted=topk_cats[0],
           topk_values=argmax_topk.values.tolist(),
           topk_cats=topk_cats
       ))
 
       accuracy = 100 * (num_correct / len(outcomes))
-      it.set_description(f"Acc: {accuracy:.02f}%")
+      topk_accuracy = 100 * (num_topk_correct / len(outcomes))
+      it.set_description(f"Acc: {accuracy:.02f}% | {topk_accuracy:.02f}%")
 
   return outcomes
 
@@ -283,5 +286,11 @@ def train_and_test(
 
   trainer.train_model(num_epochs, max_lr)
 
-  return test_combined_bicubic(
+  outcomes = test_combined_bicubic(
       cbed_data.img_path, trainer.model, cbed_data.label_manager, rotate_deg=360)
+
+  outcomes_df = pd.DataFrame(outcomes)
+  outcomes_df.to_csv(pathlib.Path(trainer.save_filedir)/'outcomes.csv')
+  outcomes_df.to_json(pathlib.Path(trainer.save_filedir)/'outcomes.json')
+
+  return outcomes
