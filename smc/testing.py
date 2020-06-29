@@ -247,29 +247,26 @@ class CombinedBicubicTester:
 
 
 def train_and_test(
-    data_name, model_params: model.ModelParams, tag,
+    data_params: data.DataParams, model_params: model.ModelParams, tag,
     num_epochs, max_lr,
-    batch_size=512, lsuv_iterations=4,
-    use_mixup=True, p_erase=0.8, rotation_interpolation=None,
+    lsuv_iterations=4,
+    use_mixup=True,
     use_cuda=True,
     check_description=False,
 ):
   gc.collect()  # hack to reclaim gpu memory
 
+  data_name = data_params.img_path
   description = (
-      f"{tag}: {data_name} | {model_params} | {num_epochs} epochs @ lr={max_lr}"
-      f"\np_erase={100*p_erase:.0f}% | rot_interp={rotation_interpolation}"
+      f"{tag}: {data_name} {num_epochs} epochs @ lr={max_lr}"
+      f"\n{data_params}"
+      f"\n{model_params}"
       f"\nlsuv_its={lsuv_iterations} | mixup={use_mixup}"
   )
   print(description)
   if check_description: return
 
-  cbed_data = data.CbedData(
-      data.get_img_path(data_name),
-      batch_size=batch_size,
-      p_erase=p_erase, rotation_interpolation=rotation_interpolation,
-      pin_memory=use_cuda,
-  )
+  cbed_data = data.CbedData(data_params, pin_memory=use_cuda)
 
   m = model.make_1chan_model(model_params, cbed_data.label_manager.num_classes)
   if use_cuda: m = m.cuda()

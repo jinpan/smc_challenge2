@@ -171,14 +171,22 @@ def get_img_path(data_name):
   return rootdir/data_name
 
 
+@dataclasses.dataclass
+class DataParams:
+  img_path: str
+  batch_size: int
+  p_erase: float
+
+  horizontal_flip: bool = False
+  rotation_interpolation: utils.RotationInterpolation = None
+  chans: str = 'L'
+
 class CbedData:
   def __init__(self,
-      img_path, batch_size, p_erase,
-      rotation_interpolation=None,
-      chans='L', num_workers=None,
-      pin_memory=True,
+      params: DataParams,
+      num_workers=None, pin_memory=True,
     ):
-    self.img_path = pathlib.Path(img_path)
+    self.img_path = get_img_path(params.img_path)
 
     self.label_manager = LabelManager()
 
@@ -187,17 +195,18 @@ class CbedData:
       num_workers = len(os.sched_getaffinity(0))
     self._num_workers = num_workers
 
-    image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
+    image_loader_fn = lambda fn: PIL.Image.open(fn).convert(params.chans)
 
     train_transforms = []
-    if rotation_interpolation is not None:
-      train_transforms.append(utils.RandomRotation(rotation_interpolation))
+    if params.horizontal_flip:
+      train_transforms.append(torchvision.transforms.RandomHorizontalFlip())
+    if params.rotation_interpolation is not None:
+      train_transforms.append(utils.RandomRotation(params.rotation_interpolation))
     train_transforms.extend([
         torchvision.transforms.ToTensor(),
-        torchvision.transforms.RandomErasing(p=p_erase),
+        torchvision.transforms.RandomErasing(p=params.p_erase),
     ])
 
-    print("no flip; no rotation")
     self._train_set = CbedDataset(
         self.img_path/'train',
         self.label_manager,
@@ -216,14 +225,14 @@ class CbedData:
 
     self.train_loader = torch.utils.data.DataLoader(
         self._train_set,
-        batch_size=batch_size,
+        batch_size=params.batch_size,
         shuffle=True,
         pin_memory=pin_memory,
         num_workers=self._num_workers,
     )
     self.valid_loader = torch.utils.data.DataLoader(
         self._valid_set,
-        batch_size=batch_size,
+        batch_size=params.batch_size,
         pin_memory=pin_memory,
         # don't set num_workers since we do minimal transformations on the validation set.
     )
