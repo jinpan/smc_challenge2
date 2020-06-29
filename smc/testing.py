@@ -39,6 +39,7 @@ def test_combined_bicubic(
     img_path, model, label_manager,
     filedir='valid', rotate_deg=5, topk=None):
 
+  model_device = next(iter(model.parameters())).device
   if topk is None:
     topk = min(5, label_manager.num_classes-1)
 
@@ -78,7 +79,7 @@ def test_combined_bicubic(
 
       model.eval()
       with torch.no_grad():
-        out = model(torch.stack(tensors).cuda())
+        out = model(torch.stack(tensors).to(model_device))
         argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=topk)
         # If we take the log before mean, then we effectively multiply
         # the softmax probabilities together.

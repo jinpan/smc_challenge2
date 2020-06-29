@@ -167,6 +167,7 @@ class CbedData:
   def __init__(self,
       img_path, batch_size,
       chans='L', num_workers=None,
+      pin_memory=True,
     ):
     self.img_path = pathlib.Path(img_path)
 
@@ -179,7 +180,7 @@ class CbedData:
 
     image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
 
-    print("NO FLIP; no rotation")
+    print("no flip; no rotation")
     self._train_set = CbedDataset(
         self.img_path/'train',
         self.label_manager,
@@ -208,13 +209,13 @@ class CbedData:
         self._train_set,
         batch_size=batch_size,
         shuffle=True,
-        pin_memory=True,
+        pin_memory=pin_memory,
         num_workers=self._num_workers,
     )
     self.valid_loader = torch.utils.data.DataLoader(
         self._valid_set,
         batch_size=batch_size,
-        pin_memory=True,
+        pin_memory=pin_memory,
         # don't set num_workers since we do minimal transformations on the validation set.
     )
 
