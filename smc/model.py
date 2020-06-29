@@ -19,7 +19,7 @@ class BasicBlock(nn.Module):
   expansion = 1
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20):
+               base_width=20, l1_width=20):
     super().__init__()
     if groups != 1:
       raise ValueError('BasicBlock only supports groups=1')
@@ -43,7 +43,7 @@ class BasicBlock(nn.Module):
     out = self.bn2(out)
 
     if self.downsample is not None:
-        identity = self.downsample(x)
+      identity = self.downsample(x)
 
     out += identity
     out = self.relu(out)
@@ -57,14 +57,12 @@ class Bottleneck(nn.Module):
   # This variant is also known as ResNet V1.5 and improves accuracy according to
   # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
 
-  # changed base_width from 64 to 20
-
   expansion = 4
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20):
+               base_width=20, l1_width=20):
     super().__init__()
-    width = int(planes * (base_width / 20.)) * groups
+    width = int(planes * (base_width / float(l1_width))) * groups
     # Both self.conv2 and self.downsample layers downsample the input when stride != 1
     self.conv1 = torchvision.models.resnet.conv1x1(inplanes, width)
     self.bn1 = nn.BatchNorm2d(width)
@@ -101,15 +99,16 @@ class Bottleneck(nn.Module):
 
 class ResNet1Chan(nn.Module):
   def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
-               groups=1, width_per_group=20,
+               groups=1, width_per_group=20, l1_width=20,
                use_333_input_conv=False,     # resnet-C
                pool_downsample_ident=False,  # resnet-D
                ):
     # changed width_per_group from 64 -> 20
     super().__init__()
+    self._l1_width = l1_width
     self._pool_downsample_ident = pool_downsample_ident  # resnet-D
 
-    self.inplanes = 20
+    self.inplanes = l1_width
     self.groups = groups
     self.base_width = width_per_group
     # changed initial input from 3->1 (nn.Conv2d(3, ...) -> nn.Conv2d(1, ...))
@@ -129,12 +128,12 @@ class ResNet1Chan(nn.Module):
         nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
     )
 
-    self.layer1 = self._make_layer(block, 20, layers[0])  # 64 -> 20
-    self.layer2 = self._make_layer(block, 40, layers[1], stride=2)  # 128 -> 40
-    self.layer3 = self._make_layer(block, 80, layers[2], stride=2)  # 256 -> 80
-    self.layer4 = self._make_layer(block, 160, layers[3], stride=2)  # 512 -> 160
+    self.layer1 = self._make_layer(block, l1_width, layers[0])  # 64 -> l1_width
+    self.layer2 = self._make_layer(block, 2*l1_width, layers[1], stride=2)  # 128 -> 2*l1_width
+    self.layer3 = self._make_layer(block, 4*l1_width, layers[2], stride=2)  # 256 -> 4*l1_width
+    self.layer4 = self._make_layer(block, 8*l1_width, layers[3], stride=2)  # 512 -> 8*l1_width
     self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-    self.fc = nn.Linear(160 * block.expansion, num_classes)  # 512 -> 160
+    self.fc = nn.Linear(8*l1_width * block.expansion, num_classes)  # 512 -> 8*l1_width
 
     for m in self.modules():
       if isinstance(m, nn.Conv2d):
@@ -174,11 +173,11 @@ class ResNet1Chan(nn.Module):
 
     layers = []
     layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                        base_width=self.base_width))
+                        base_width=self.base_width, l1_width=self._l1_width))
     self.inplanes = outplanes
     for _ in range(1, blocks):
       layers.append(block(self.inplanes, planes, groups=self.groups,
-                          base_width=self.base_width))
+                          base_width=self.base_width, l1_width=self._l1_width))
 
     return nn.Sequential(*layers)
 
@@ -212,6 +211,7 @@ def maybe_apply_dropout(model, dropout):
 @dataclasses.dataclass
 class ModelParams:
   name: str
+  l1_width: int = 20
   zero_init_residual: bool = False
   use_333_input_conv: bool = False  # resnet-C
   pool_downsample_ident: bool = False  # resnet-D
@@ -226,6 +226,7 @@ def make_1chan_model(params: ModelParams, num_classes: int):
   fn = name_to_fn[params.name]
   return fn(
       num_classes=num_classes,
+      l1_width=params.l1_width,
       zero_init_residual=params.zero_init_residual,
       use_333_input_conv=params.use_333_input_conv,
       pool_downsample_ident=params.pool_downsample_ident,
