@@ -19,18 +19,16 @@ class BasicBlock(nn.Module):
   expansion = 1
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20, norm_layer=None):
+               base_width=20):
     super().__init__()
-    if norm_layer is None:
-      norm_layer = nn.BatchNorm2d
     if groups != 1:
       raise ValueError('BasicBlock only supports groups=1')
     # Both self.conv1 and self.downsample layers downsample the input when stride != 1
     self.conv1 = torchvision.models.resnet.conv3x3(inplanes, planes, stride)
-    self.bn1 = norm_layer(planes)
+    self.bn1 = nn.BatchNorm2d(planes)
     self.relu = nn.ReLU(inplace=True)
     self.conv2 = torchvision.models.resnet.conv3x3(planes, planes)
-    self.bn2 = norm_layer(planes)
+    self.bn2 = nn.BatchNorm2d(planes)
     self.downsample = downsample
     self.stride = stride
 
@@ -64,18 +62,16 @@ class Bottleneck(nn.Module):
   expansion = 4
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20, norm_layer=None):
+               base_width=20):
     super().__init__()
-    if norm_layer is None:
-      norm_layer = nn.BatchNorm2d
     width = int(planes * (base_width / 20.)) * groups
     # Both self.conv2 and self.downsample layers downsample the input when stride != 1
     self.conv1 = torchvision.models.resnet.conv1x1(inplanes, width)
-    self.bn1 = norm_layer(width)
+    self.bn1 = nn.BatchNorm2d(width)
     self.conv2 = torchvision.models.resnet.conv3x3(width, width, stride, groups)
-    self.bn2 = norm_layer(width)
+    self.bn2 = nn.BatchNorm2d(width)
     self.conv3 = torchvision.models.resnet.conv1x1(width, planes * self.expansion)
-    self.bn3 = norm_layer(planes * self.expansion)
+    self.bn3 = nn.BatchNorm2d(planes * self.expansion)
     self.relu = nn.ReLU(inplace=True)
     self.downsample = downsample
     self.stride = stride
@@ -106,15 +102,11 @@ class Bottleneck(nn.Module):
 class ResNet1Chan(nn.Module):
   def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                groups=1, width_per_group=20,
-               norm_layer=None,
                use_333_input_conv=False,     # resnet-C
                pool_downsample_ident=False,  # resnet-D
                ):
     # changed width_per_group from 64 -> 20
     super().__init__()
-    if norm_layer is None:
-      norm_layer = nn.BatchNorm2d
-    self._norm_layer = norm_layer
     self._pool_downsample_ident = pool_downsample_ident  # resnet-D
 
     self.inplanes = 20
@@ -132,7 +124,7 @@ class ResNet1Chan(nn.Module):
       input_conv = nn.Conv2d(1, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
     self.input_stem = nn.Sequential(
         input_conv,
-        norm_layer(self.inplanes),
+        nn.BatchNorm2d(self.inplanes),
         nn.ReLU(inplace=True),
         nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
     )
@@ -162,7 +154,6 @@ class ResNet1Chan(nn.Module):
           nn.init.constant_(m.bn2.weight, 0)
 
   def _make_layer(self, block, planes, blocks, stride=1):
-    norm_layer = self._norm_layer
     downsample = None
     outplanes = planes * block.expansion
     if stride != 1 or self.inplanes != outplanes:
@@ -178,16 +169,16 @@ class ResNet1Chan(nn.Module):
             torchvision.models.resnet.conv1x1(self.inplanes, outplanes, stride)
         )
 
-      downsample_layers.append(norm_layer(outplanes))
+      downsample_layers.append(nn.BatchNorm2d(outplanes))
       downsample = nn.Sequential(*downsample_layers)
 
     layers = []
     layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                        base_width=self.base_width, norm_layer=norm_layer))
+                        base_width=self.base_width))
     self.inplanes = outplanes
     for _ in range(1, blocks):
       layers.append(block(self.inplanes, planes, groups=self.groups,
-                          base_width=self.base_width, norm_layer=norm_layer))
+                          base_width=self.base_width))
 
     return nn.Sequential(*layers)
 
