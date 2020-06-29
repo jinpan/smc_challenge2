@@ -19,14 +19,12 @@ class BasicBlock(nn.Module):
   expansion = 1
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20, dilation=1, norm_layer=None):
+               base_width=20, norm_layer=None):
     super().__init__()
     if norm_layer is None:
       norm_layer = nn.BatchNorm2d
-    if groups != 1 or base_width != 20:
-      raise ValueError('BasicBlock only supports groups=1 and base_width=20')
-    if dilation > 1:
-      raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
+    if groups != 1:
+      raise ValueError('BasicBlock only supports groups=1')
     # Both self.conv1 and self.downsample layers downsample the input when stride != 1
     self.conv1 = torchvision.models.resnet.conv3x3(inplanes, planes, stride)
     self.bn1 = norm_layer(planes)
@@ -66,7 +64,7 @@ class Bottleneck(nn.Module):
   expansion = 4
 
   def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-               base_width=20, dilation=1, norm_layer=None):
+               base_width=20, norm_layer=None):
     super().__init__()
     if norm_layer is None:
       norm_layer = nn.BatchNorm2d
@@ -74,7 +72,7 @@ class Bottleneck(nn.Module):
     # Both self.conv2 and self.downsample layers downsample the input when stride != 1
     self.conv1 = torchvision.models.resnet.conv1x1(inplanes, width)
     self.bn1 = norm_layer(width)
-    self.conv2 = torchvision.models.resnet.conv3x3(width, width, stride, groups, dilation)
+    self.conv2 = torchvision.models.resnet.conv3x3(width, width, stride, groups)
     self.bn2 = norm_layer(width)
     self.conv3 = torchvision.models.resnet.conv1x1(width, planes * self.expansion)
     self.bn3 = norm_layer(planes * self.expansion)
@@ -107,7 +105,7 @@ class Bottleneck(nn.Module):
 
 class ResNet1Chan(nn.Module):
   def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
-               groups=1, width_per_group=20, replace_stride_with_dilation=None,
+               groups=1, width_per_group=20,
                norm_layer=None,
                use_333_input_conv=False,     # resnet-C
                pool_downsample_ident=False,  # resnet-D
@@ -120,14 +118,6 @@ class ResNet1Chan(nn.Module):
     self._pool_downsample_ident = pool_downsample_ident  # resnet-D
 
     self.inplanes = 20
-    self.dilation = 1
-    if replace_stride_with_dilation is None:
-      # each element in the tuple indicates if we should replace
-      # the 2x2 stride with a dilated convolution instead
-      replace_stride_with_dilation = [False, False, False]
-    if len(replace_stride_with_dilation) != 3:
-      raise ValueError("replace_stride_with_dilation should be None "
-                       "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
     self.groups = groups
     self.base_width = width_per_group
     # changed initial input from 3->1 (nn.Conv2d(3, ...) -> nn.Conv2d(1, ...))
@@ -148,12 +138,9 @@ class ResNet1Chan(nn.Module):
     )
 
     self.layer1 = self._make_layer(block, 20, layers[0])  # 64 -> 20
-    self.layer2 = self._make_layer(block, 40, layers[1], stride=2,  # 128 -> 40
-                                   dilate=replace_stride_with_dilation[0])
-    self.layer3 = self._make_layer(block, 80, layers[2], stride=2,  # 256 -> 80
-                                   dilate=replace_stride_with_dilation[1])
-    self.layer4 = self._make_layer(block, 160, layers[3], stride=2,  # 512 -> 160
-                                   dilate=replace_stride_with_dilation[2])
+    self.layer2 = self._make_layer(block, 40, layers[1], stride=2)  # 128 -> 40
+    self.layer3 = self._make_layer(block, 80, layers[2], stride=2)  # 256 -> 80
+    self.layer4 = self._make_layer(block, 160, layers[3], stride=2)  # 512 -> 160
     self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
     self.fc = nn.Linear(160 * block.expansion, num_classes)  # 512 -> 160
 
@@ -174,13 +161,9 @@ class ResNet1Chan(nn.Module):
         elif isinstance(m, BasicBlock):
           nn.init.constant_(m.bn2.weight, 0)
 
-  def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
+  def _make_layer(self, block, planes, blocks, stride=1):
     norm_layer = self._norm_layer
     downsample = None
-    previous_dilation = self.dilation
-    if dilate:
-      self.dilation *= stride
-      stride = 1
     outplanes = planes * block.expansion
     if stride != 1 or self.inplanes != outplanes:
       downsample_layers = []
@@ -200,12 +183,11 @@ class ResNet1Chan(nn.Module):
 
     layers = []
     layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
-                        self.base_width, previous_dilation, norm_layer))
+                        base_width=self.base_width, norm_layer=norm_layer))
     self.inplanes = outplanes
     for _ in range(1, blocks):
       layers.append(block(self.inplanes, planes, groups=self.groups,
-                          base_width=self.base_width, dilation=self.dilation,
-                          norm_layer=norm_layer))
+                          base_width=self.base_width, norm_layer=norm_layer))
 
     return nn.Sequential(*layers)
 
