@@ -1,6 +1,7 @@
 import collections
 import concurrent
 import dataclasses
+import gc
 import math
 import multiprocessing
 import os
@@ -15,6 +16,9 @@ import torch.nn.functional as F
 import torchvision
 import tqdm
 
+from . import data
+from . import model
+from . import training
 from . import statistics
 from . import utils
 
@@ -36,10 +40,10 @@ def _make_tensor_for_test(img, angle):
     return torchvision.transforms.functional.to_tensor(img)
 
 def test_combined_bicubic(
-    img_path, model, label_manager,
+    img_path, m, label_manager,
     filedir='valid', rotate_deg=5, topk=None):
 
-  model_device = next(iter(model.parameters())).device
+  model_device = next(iter(m.parameters())).device
   if topk is None:
     topk = min(5, label_manager.num_classes-1)
 
@@ -77,9 +81,9 @@ def test_combined_bicubic(
         tensor = f.result()
         tensors.append(tensor)
 
-      model.eval()
+      m.eval()
       with torch.no_grad():
-        out = model(torch.stack(tensors).to(model_device))
+        out = m(torch.stack(tensors).to(model_device))
         argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=topk)
         # If we take the log before mean, then we effectively multiply
         # the softmax probabilities together.
@@ -184,7 +188,7 @@ class CombinedBicubicTester:
     for p in processes: p.join()
 
   @utils.defer
-  def test(self, model, _defer=None, num_procs=None):
+  def test(self, m, _defer=None, num_procs=None):
     arg_q = multiprocessing.Queue()
     tsr_q = multiprocessing.Queue(1)
 
@@ -202,14 +206,14 @@ class CombinedBicubicTester:
     num_correct = 0
     outcomes = []
 
-    model.eval()
+    m.eval()
     it = tqdm.tqdm(range(len(self._grouped_filenames)))
     for _ in it:
       group, tensors = tsr_q.get()
       space_group = self._group_to_spacegroup[group]
 
       with torch.no_grad():
-        out = model(tensors.cuda())
+        out = m(tensors.cuda())
         argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=self._topk)
         # If we take the log before mean, then we effectively multiply
         # the softmax probabilities together.
@@ -237,3 +241,46 @@ class CombinedBicubicTester:
 
     assert tsr_q.empty()
     return outcomes
+
+
+def train_and_test(
+    data_name, model_params: model.ModelParams, tag,
+    num_epochs, max_lr,
+    batch_size=512, lsuv_iterations=4,
+    use_mixup=True, p_erase=0.8,
+    use_cuda=True,
+    check_description=False,
+):
+  gc.collect()  # hack to reclaim gpu memory
+
+  description = (
+      f"{tag}: {data_name} | {model_params} | {num_epochs} epochs @ lr={max_lr}"
+      f"\np_erase={100*p_erase:.0f}%"
+      f"\nlsuv_its={lsuv_iterations} | mixup={use_mixup}"
+  )
+  print(description)
+  if check_description: return
+
+  cbed_data = data.CbedData(
+      data.get_img_path(data_name),
+      batch_size=batch_size, p_erase=p_erase,
+      pin_memory=use_cuda,
+  )
+
+  m = model.make_1chan_model(model_params, cbed_data.label_manager.num_classes)
+  if use_cuda: m = m.cuda()
+  model.lsuv(m, cbed_data, iterations=lsuv_iterations)
+
+  trainer = training.Trainer(
+      comment=f"{data_name}_{tag}",
+      description=description,
+      cbed_data=cbed_data,
+      model=m,
+      loss_fn=F.cross_entropy,
+      use_mixup=use_mixup,
+  )
+
+  trainer.train_model(num_epochs, max_lr)
+
+  return test_combined_bicubic(
+      cbed_data.img_path, trainer.model, cbed_data.label_manager, rotate_deg=360)

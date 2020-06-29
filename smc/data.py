@@ -163,9 +163,17 @@ class CbedDataset(torch.utils.data.Dataset):
     return len(self._image_cache)
 
 
+def get_img_path(data_name):
+  rootdir = pathlib.Path(os.environ.get(
+      '_SMC_IMG_DIR',
+      '/home/jin/sandbox/smc_challenge2/images',
+  ))
+  return rootdir/data_name
+
+
 class CbedData:
   def __init__(self,
-      img_path, batch_size,
+      img_path, batch_size, p_erase,
       chans='L', num_workers=None,
       pin_memory=True,
     ):
@@ -192,7 +200,7 @@ class CbedData:
             # utils.RandomRotation(utils.RotationInterpolation.OPENCV_LANCZOS4),
             # utils.RandomRotation(utils.RotationInterpolation.OPENCV_CUBIC),
             torchvision.transforms.ToTensor(),
-            torchvision.transforms.RandomErasing(p=0.8),
+            torchvision.transforms.RandomErasing(p=p_erase),
         ],
     ))
     self.label_manager.freeze()

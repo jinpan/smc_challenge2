@@ -235,6 +235,28 @@ def maybe_apply_dropout(model, dropout):
   linear = model.fc
   model.fc = nn.Sequential(nn.Dropout(p=dropout), linear)
 
+
+@dataclasses.dataclass
+class ModelParams:
+  name: str
+  use_333_input_conv: bool = False  # resnet-C
+  pool_downsample_ident: bool = False  # resnet-D
+
+def make_1chan_model(params: ModelParams, num_classes: int):
+  name_to_fn = {
+      'resnet18': make_resnet18_1chan,
+      'resnet34': make_resnet34_1chan,
+      'resnet50': make_resnet50_1chan,
+      'resnet101': make_resnet101_1chan,
+  }
+  fn = name_to_fn[params.name]
+  return fn(
+      num_classes=num_classes,
+      use_333_input_conv=params.use_333_input_conv,
+      pool_downsample_ident=params.pool_downsample_ident,
+  )
+
+
 def make_resnet18_1chan(num_classes=1000, dropout=None, **kwargs):
   model = ResNet1Chan(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, **kwargs)
   maybe_apply_dropout(model, dropout)
