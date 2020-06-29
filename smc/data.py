@@ -203,7 +203,7 @@ class CbedData:
         self.label_manager,
         image_loader_fn,
         transform=torchvision.transforms.Compose(train_transforms),
-    ))
+    )
     self.label_manager.freeze()
     self._valid_set = CbedDataset(
         self.img_path/'valid',
