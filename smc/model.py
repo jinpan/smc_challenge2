@@ -108,12 +108,16 @@ class Bottleneck(nn.Module):
 class ResNet1Chan(nn.Module):
   def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                groups=1, width_per_group=20, replace_stride_with_dilation=None,
-               norm_layer=None, use_333_input_conv=False):
+               norm_layer=None,
+               use_333_input_conv=False,     # resnet-C
+               pool_downsample_ident=False,  # resnet-D
+               ):
     # changed width_per_group from 64 -> 20
     super().__init__()
     if norm_layer is None:
       norm_layer = nn.BatchNorm2d
     self._norm_layer = norm_layer
+    self._pool_downsample_ident = pool_downsample_ident  # resnet-D
 
     self.inplanes = 20
     self.dilation = 1
@@ -177,16 +181,27 @@ class ResNet1Chan(nn.Module):
     if dilate:
       self.dilation *= stride
       stride = 1
-    if stride != 1 or self.inplanes != planes * block.expansion:
-      downsample = nn.Sequential(
-          torchvision.models.resnet.conv1x1(self.inplanes, planes * block.expansion, stride),
-          norm_layer(planes * block.expansion),
-      )
+    outplanes = planes * block.expansion
+    if stride != 1 or self.inplanes != outplanes:
+      downsample_layers = []
+
+      if stride != 1 and self._pool_downsample_ident:
+        downsample_layers.extend([
+            nn.AvgPool2d(kernel_size=stride, stride=stride),
+            torchvision.models.resnet.conv1x1(self.inplanes, outplanes),
+        ])
+      else:
+        downsample_layers.append(
+            torchvision.models.resnet.conv1x1(self.inplanes, outplanes, stride)
+        )
+
+      downsample_layers.append(norm_layer(outplanes))
+      downsample = nn.Sequential(*downsample_layers)
 
     layers = []
     layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
                         self.base_width, previous_dilation, norm_layer))
-    self.inplanes = planes * block.expansion
+    self.inplanes = outplanes
     for _ in range(1, blocks):
       layers.append(block(self.inplanes, planes, groups=self.groups,
                           base_width=self.base_width, dilation=self.dilation,
@@ -220,22 +235,26 @@ def maybe_apply_dropout(model, dropout):
   linear = model.fc
   model.fc = nn.Sequential(nn.Dropout(p=dropout), linear)
 
-def make_resnet18_1chan(num_classes=1000, dropout=None):
-  model = ResNet1Chan(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
+def make_resnet18_1chan(num_classes=1000, dropout=None, **kwargs):
+  model = ResNet1Chan(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, **kwargs)
   maybe_apply_dropout(model, dropout)
 
   return model
 
-def make_resnet34_1chan(num_classes=1000, dropout=None):
-  model = ResNet1Chan(BasicBlock, [3, 4, 6, 3], num_classes=num_classes)
+def make_resnet34_1chan(num_classes=1000, dropout=None, **kwargs):
+  model = ResNet1Chan(BasicBlock, [3, 4, 6, 3], num_classes=num_classes, **kwargs)
   maybe_apply_dropout(model, dropout)
 
   return model
 
-def make_resnet50_1chan(num_classes=1000, dropout=None, use_333_input_conv=False):
-  model = ResNet1Chan(
-      Bottleneck, [3, 4, 6, 3],
-      num_classes=num_classes, use_333_input_conv=use_333_input_conv)
+def make_resnet50_1chan(num_classes=1000, dropout=None, **kwargs):
+  model = ResNet1Chan(Bottleneck, [3, 4, 6, 3], num_classes=num_classes, **kwargs)
+  maybe_apply_dropout(model, dropout)
+
+  return model
+
+def make_resnet101_1chan(num_classes=1000, dropout=None, **kwargs):
+  model = ResNet1Chan(Bottleneck, [3, 4, 23, 3], num_classes=num_classes, **kwargs)
   maybe_apply_dropout(model, dropout)
 
   return model
