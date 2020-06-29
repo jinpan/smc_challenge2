@@ -212,6 +212,7 @@ def maybe_apply_dropout(model, dropout):
 @dataclasses.dataclass
 class ModelParams:
   name: str
+  zero_init_residual: bool = False
   use_333_input_conv: bool = False  # resnet-C
   pool_downsample_ident: bool = False  # resnet-D
 
@@ -225,6 +226,7 @@ def make_1chan_model(params: ModelParams, num_classes: int):
   fn = name_to_fn[params.name]
   return fn(
       num_classes=num_classes,
+      zero_init_residual=params.zero_init_residual,
       use_333_input_conv=params.use_333_input_conv,
       pool_downsample_ident=params.pool_downsample_ident,
   )
