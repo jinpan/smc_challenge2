@@ -247,7 +247,7 @@ def train_and_test(
     data_name, model_params: model.ModelParams, tag,
     num_epochs, max_lr,
     batch_size=512, lsuv_iterations=4,
-    use_mixup=True, p_erase=0.8,
+    use_mixup=True, p_erase=0.8, rotation_interpolation=None,
     use_cuda=True,
     check_description=False,
 ):
@@ -255,7 +255,7 @@ def train_and_test(
 
   description = (
       f"{tag}: {data_name} | {model_params} | {num_epochs} epochs @ lr={max_lr}"
-      f"\np_erase={100*p_erase:.0f}%"
+      f"\np_erase={100*p_erase:.0f}% | rot_interp={rotation_interpolation}"
       f"\nlsuv_its={lsuv_iterations} | mixup={use_mixup}"
   )
   print(description)
@@ -263,7 +263,8 @@ def train_and_test(
 
   cbed_data = data.CbedData(
       data.get_img_path(data_name),
-      batch_size=batch_size, p_erase=p_erase,
+      batch_size=batch_size,
+      p_erase=p_erase, rotation_interpolation=rotation_interpolation,
       pin_memory=use_cuda,
   )
 

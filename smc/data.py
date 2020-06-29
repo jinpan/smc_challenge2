@@ -174,6 +174,7 @@ def get_img_path(data_name):
 class CbedData:
   def __init__(self,
       img_path, batch_size, p_erase,
+      rotation_interpolation=None,
       chans='L', num_workers=None,
       pin_memory=True,
     ):
@@ -188,20 +189,20 @@ class CbedData:
 
     image_loader_fn = lambda fn: PIL.Image.open(fn).convert(chans)
 
+    train_transforms = []
+    if rotation_interpolation is not None:
+      train_transforms.append(utils.RandomRotation(rotation_interpolation))
+    train_transforms.extend([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomErasing(p=p_erase),
+    ])
+
     print("no flip; no rotation")
     self._train_set = CbedDataset(
         self.img_path/'train',
         self.label_manager,
         image_loader_fn,
-        transform=torchvision.transforms.Compose([
-            # torchvision.transforms.RandomHorizontalFlip(),
-            # torchvision.transforms.RandomRotation(360., resample=PIL.Image.BICUBIC),
-            # utils.RandomRotation(utils.RotationInterpolation.TORCH_BICUBIC),
-            # utils.RandomRotation(utils.RotationInterpolation.OPENCV_LANCZOS4),
-            # utils.RandomRotation(utils.RotationInterpolation.OPENCV_CUBIC),
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.RandomErasing(p=p_erase),
-        ],
+        transform=torchvision.transforms.Compose(train_transforms),
     ))
     self.label_manager.freeze()
     self._valid_set = CbedDataset(
