@@ -212,6 +212,8 @@ def maybe_apply_dropout(model, dropout):
 class ModelParams:
   name: str
   l1_width: int = 20
+  groups: int = None  # resnext
+  width_per_group: int = None  # resnext
   zero_init_residual: bool = False
   use_333_input_conv: bool = False  # resnet-C
   pool_downsample_ident: bool = False  # resnet-D
@@ -224,13 +226,18 @@ def make_1chan_model(params: ModelParams, num_classes: int):
       'resnet101': make_resnet101_1chan,
   }
   fn = name_to_fn[params.name]
-  return fn(
-      num_classes=num_classes,
-      l1_width=params.l1_width,
-      zero_init_residual=params.zero_init_residual,
-      use_333_input_conv=params.use_333_input_conv,
-      pool_downsample_ident=params.pool_downsample_ident,
-  )
+
+  kwargs = {
+      'num_classes': num_classes,
+      'l1_width': params.l1_width,
+      'zero_init_residual': params.zero_init_residual,
+      'use_333_input_conv': params.use_333_input_conv,
+      'pool_downsample_ident': params.pool_downsample_ident,
+  }
+  if params.groups is not None: kwargs['groups'] = params.groups
+  if params.width_per_group is not None: kwargs['width_per_group'] = params.width_per_group
+
+  return fn(**kwargs)
 
 
 def make_resnet18_1chan(num_classes=1000, dropout=None, **kwargs):
