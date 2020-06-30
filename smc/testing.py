@@ -43,7 +43,7 @@ def _make_tensor_for_test(img, angle):
 
 def test_combined_bicubic(
     img_path, m, label_manager,
-    filedir='valid', rotate_deg=5, topk=None):
+    filedir='valid', rotate_deg=5, topk=None, test_cbed_slices=('0', '1', '2')):
 
   model_device = next(iter(m.parameters())).device
   if topk is None:
@@ -53,7 +53,8 @@ def test_combined_bicubic(
   group_to_spacegroup = {}
 
   for filename in img_path.glob(f'{filedir}/*'):
-    sample, _, space_group, _ = filename.name.split('.')
+    sample, cbed_slice, space_group, _ext = filename.name.split('.')
+    if cbed_slice not in test_cbed_slices: continue
     grouped_filenames[sample].append(filename.name)
     space_group = int(space_group)
     group_to_spacegroup[sample] = space_group
@@ -284,7 +285,8 @@ def train_and_test(
   trainer.train_model(num_epochs, max_lr)
 
   outcomes = test_combined_bicubic(
-      cbed_data.img_path, trainer.model, cbed_data.label_manager, rotate_deg=360)
+      cbed_data.img_path, trainer.model, cbed_data.label_manager,
+      rotate_deg=360, test_cbed_slices=data_params.cbed_slices)
 
   outcomes_df = pd.DataFrame(outcomes)
   outcomes_df.to_csv(pathlib.Path(trainer.save_filedir)/'outcomes.csv')

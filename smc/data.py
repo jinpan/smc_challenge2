@@ -6,6 +6,7 @@ import os
 import pathlib
 import random
 import re
+import typing
 
 import PIL
 import torch
@@ -99,9 +100,10 @@ class LabelManager:
 
 
 class CbedImageCacheDataset(torch.utils.data.Dataset):
-  _spacegroup_re = re.compile(r'.*\.(\d{1,3})\.png$')
+  _spacegroup_re = re.compile(r'.*\.(0|1|2)\.(\d{1,3})\.png$')
 
-  def __init__(self, root, label_manager, image_loader_fn, lazy=True):
+  def __init__(self, root, label_manager, image_loader_fn,
+               cbed_slices=('0','1','2'), lazy=True):
     self._filenames = []
     self._images = []
     self._labels = []
@@ -112,9 +114,11 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
 
     for filename in root.glob('*.png'):
       m = utils.must_match(self._spacegroup_re, filename.name)
+      cbed_slice, space_group = m.group(1), m.group(2)
+      if cbed_slice not in cbed_slices: continue
 
       filenames.append(filename)
-      raw_labels.append(m.group(1))
+      raw_labels.append(space_group)
 
     mappings = label_manager.get_label_mappings(set(raw_labels))
 
@@ -149,9 +153,9 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
 
 
 class CbedDataset(torch.utils.data.Dataset):
-  def __init__(self, root, label_manager, image_loader_fn, transform):
+  def __init__(self, root, label_manager, image_loader_fn, cbed_slices, transform):
     self._image_cache = CbedImageCacheDataset(
-        root, label_manager, image_loader_fn)
+        root, label_manager, image_loader_fn, cbed_slices=cbed_slices)
 
     self._transform = transform
 
@@ -176,6 +180,8 @@ class DataParams:
   img_path: str
   batch_size: int
   p_erase: float
+
+  cbed_slices: typing.Tuple[str] = ('0','1','2')
 
   horizontal_flip: bool = False
   rotation_interpolation: utils.RotationInterpolation = None
@@ -211,6 +217,7 @@ class CbedData:
         self.img_path/'train',
         self.label_manager,
         image_loader_fn,
+        cbed_slices=params.cbed_slices,
         transform=torchvision.transforms.Compose(train_transforms),
     )
     self.label_manager.freeze()
@@ -218,6 +225,7 @@ class CbedData:
         self.img_path/'valid',
         self.label_manager,
         image_loader_fn,
+        cbed_slices=params.cbed_slices,
         transform=torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
         ],
