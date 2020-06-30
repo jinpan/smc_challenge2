@@ -237,20 +237,23 @@ class Trainer:
       topk_key: [],
     }
 
+    num_preds = 0
+
     for xb, yb in self.cbed_data.valid_loader:
       xb, yb = xb.cuda(), yb.cuda()
 
       preds = self.model(xb)
 
-      metric_data['Loss/valid'].append(self.loss_fn(preds, yb))
-
-      metric_data['Accuracy/valid'].append((preds.argmax(dim=1)==yb).float().mean())
+      batch_size = xb.size(0)
+      num_preds += batch_size
+      metric_data['Loss/valid'].append(self.loss_fn(preds, yb) * batch_size)
+      metric_data['Accuracy/valid'].append((preds.argmax(dim=1)==yb).float().sum())
 
       preds_topk = preds.topk(topk, dim=1).indices
       matches = (preds_topk == yb.view(-1, 1)).float().max(dim=1).values
-      metric_data[topk_key].append(matches.float().mean())
+      metric_data[topk_key].append(matches.float().sum())
 
     for name, vals in metric_data.items():
-      avg_val = torch.stack(vals).mean().item()
+      avg_val = torch.stack(vals).sum().item() / num_preds
       tbw.add_scalar(name, avg_val, epoch)
 
