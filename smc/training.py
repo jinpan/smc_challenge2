@@ -112,6 +112,8 @@ class Trainer:
   run_validation: bool = True
   use_mixup: bool = False
 
+  _added_graph: bool = False
+
   def __post_init__(self):
     os.mkdir(self.save_filedir)
 
@@ -169,12 +171,17 @@ class Trainer:
     losses = []
 
     for xb, yb in self.cbed_data.train_loader:
-      loss = self.train_batch(xb.cuda(), yb.cuda())
+      loss = self.train_batch(xb.cuda(), yb.cuda(), tbw)
       losses.append(loss)
 
     tbw.add_scalar('Loss/train', torch.stack(losses).mean().item(), epoch)
 
-  def train_batch(self, xb, yb):
+  def train_batch(self, xb, yb, tbw):
+    if not self._added_graph:
+      with torch.no_grad():
+        tbw.add_graph(self.model, xb)
+      self._added_graph = True
+
     loss = self.compute_loss(xb, yb)
     loss.backward()
 
