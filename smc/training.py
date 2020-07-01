@@ -8,10 +8,30 @@ import time
 import torch
 import torch.utils.tensorboard
 from torch import nn
+import torch.nn.functional as F
+import torch_lr_finder
 import tqdm
 
 from . import data
+from . import model
 from . import utils
+
+@utils.gc_when_done
+def find_lr(data_params: data.DataParams, model_params: model.ModelParams, use_cuda=True):
+  cbed_data = data.CbedData(data_params, pin_memory=use_cuda)
+
+  m = model.make_1chan_model(model_params, cbed_data.label_manager.num_classes)
+  if use_cuda: m = m.cuda()
+
+  model.lsuv(m, cbed_data, iterations=4)
+
+  opt = Lamb(m.parameters(), lr=1e-7, weight_decay=0.01)
+  loss = F.cross_entropy
+
+  lr_finder = torch_lr_finder.LRFinder(m, opt, loss, device="cuda" if use_cuda else "cpu")
+  lr_finder.range_test(cbed_data.train_loader, end_lr=100, num_iter=100)
+  lr_finder.plot()
+
 
 # Based on https://github.com/cybertronai/pytorch-lamb/blob/master/pytorch_lamb/lamb.py
 # MIT license
@@ -256,4 +276,3 @@ class Trainer:
     for name, vals in metric_data.items():
       avg_val = torch.stack(vals).sum().item() / num_preds
       tbw.add_scalar(name, avg_val, epoch)
-
