@@ -4,7 +4,10 @@ import gc
 import math
 import random
 
-import cv2
+try:
+  import cv2
+except ImportError as e:
+  print(f"failed to import cv2: {repr(e)}")
 from matplotlib import pyplot as plt
 import numpy as np
 import PIL
