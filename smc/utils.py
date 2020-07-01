@@ -1,5 +1,6 @@
 import enum
 import functools
+import gc
 import math
 import random
 
@@ -69,6 +70,16 @@ def defer(func):
       return func(*args, _defer=_defer_handler, **kwargs)
     finally:
       for fn, a, kw in reversed(deferred): fn(*a, **kw)
+  return func_wrapper
+
+
+def gc_when_done(func):
+  @functools.wraps(func)
+  def func_wrapper(*args, **kwargs):
+    try:
+      return func(*args, **kwargs)
+    finally:
+      gc.collect()
   return func_wrapper
 
 
