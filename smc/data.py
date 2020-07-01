@@ -103,6 +103,7 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
   _spacegroup_re = re.compile(r'.*\.(0|1|2)\.(\d{1,3})\.png$')
 
   def __init__(self, root, label_manager, image_loader_fn,
+               filter_spacegroups=None,
                cbed_slices=('0','1','2'), lazy=True):
     self._filenames = []
     self._images = []
@@ -116,6 +117,8 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
       m = utils.must_match(self._spacegroup_re, filename.name)
       cbed_slice, space_group = m.group(1), m.group(2)
       if cbed_slice not in cbed_slices: continue
+      if filter_spacegroups is not None and int(space_group) not in filter_spacegroups:
+        continue
 
       filenames.append(filename)
       raw_labels.append(space_group)
@@ -153,9 +156,9 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
 
 
 class CbedDataset(torch.utils.data.Dataset):
-  def __init__(self, root, label_manager, image_loader_fn, cbed_slices, transform):
+  def __init__(self, root, label_manager, image_loader_fn, cbed_slices, transform, filter_spacegroups):
     self._image_cache = CbedImageCacheDataset(
-        root, label_manager, image_loader_fn, cbed_slices=cbed_slices)
+        root, label_manager, image_loader_fn, filter_spacegroups, cbed_slices=cbed_slices)
 
     self._transform = transform
 
@@ -186,6 +189,7 @@ class DataParams:
   horizontal_flip: bool = False
   rotation_interpolation: utils.RotationInterpolation = None
   chans: str = 'L'
+  filter_spacegroups: typing.Optional[typing.Container[int]] = None
 
 class CbedData:
   def __init__(self,
@@ -201,17 +205,23 @@ class CbedData:
       num_workers = len(os.sched_getaffinity(0))
     self._num_workers = num_workers
 
-    image_loader_fn = lambda fn: PIL.Image.open(fn).convert(params.chans)
+    train_transforms, valid_transforms = [], []
+    if not params.horizontal_flip and not params.rotation_interpolation:
+      def image_loader_fn(fn):
+        with PIL.Image.open(fn).convert(params.chans) as img:
+          return torchvision.transforms.functional.to_tensor(img)
+    else:
+      image_loader_fn = lambda fn: PIL.Image.open(fn).convert(params.chans)
 
-    train_transforms = []
-    if params.horizontal_flip:
-      train_transforms.append(torchvision.transforms.RandomHorizontalFlip())
-    if params.rotation_interpolation is not None:
-      train_transforms.append(utils.RandomRotation(params.rotation_interpolation))
-    train_transforms.extend([
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.RandomErasing(p=params.p_erase),
-    ])
+      if params.horizontal_flip:
+        train_transforms.append(torchvision.transforms.RandomHorizontalFlip())
+      if params.rotation_interpolation is not None:
+        train_transforms.append(utils.RandomRotation(params.rotation_interpolation))
+
+      train_transforms.append(torchvision.transforms.ToTensor())
+      valid_transforms.append(torchvision.transforms.ToTensor())
+
+    train_transforms.append(torchvision.transforms.RandomErasing(p=params.p_erase))
 
     self._train_set = CbedDataset(
         self.img_path/'train',
@@ -219,6 +229,7 @@ class CbedData:
         image_loader_fn,
         cbed_slices=params.cbed_slices,
         transform=torchvision.transforms.Compose(train_transforms),
+        filter_spacegroups=params.filter_spacegroups,
     )
     self.label_manager.freeze()
     self._valid_set = CbedDataset(
@@ -226,10 +237,9 @@ class CbedData:
         self.label_manager,
         image_loader_fn,
         cbed_slices=params.cbed_slices,
-        transform=torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-        ],
-    ))
+        transform=torchvision.transforms.Compose(valid_transforms),
+        filter_spacegroups=params.filter_spacegroups,
+    )
 
     self.train_loader = torch.utils.data.DataLoader(
         self._train_set,

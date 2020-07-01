@@ -1,6 +1,7 @@
 import collections
 import concurrent
 import dataclasses
+import functools
 import gc
 import math
 import multiprocessing
@@ -35,15 +36,10 @@ PredictionOutcome = collections.namedtuple('PredictionOutcome', (
 ))
 
 
-def _make_tensor_for_test(img, angle):
-    img = torchvision.transforms.functional.rotate(
-        img, angle=angle, resample=PIL.Image.BICUBIC)
-
-    return torchvision.transforms.functional.to_tensor(img)
-
 def test_combined_bicubic(
     img_path, m, label_manager,
-    filedir='valid', rotate_deg=5, topk=None, test_cbed_slices=('0', '1', '2')):
+    filter_spacegroups=None,
+    filedir='valid', topk=None, test_cbed_slices=('0', '1', '2')):
 
   model_device = next(iter(m.parameters())).device
   if topk is None:
@@ -55,8 +51,10 @@ def test_combined_bicubic(
   for filename in img_path.glob(f'{filedir}/*'):
     sample, cbed_slice, space_group, _ext = filename.name.split('.')
     if cbed_slice not in test_cbed_slices: continue
-    grouped_filenames[sample].append(filename.name)
     space_group = int(space_group)
+    if filter_spacegroups and space_group not in filter_spacegroups:
+      continue
+    grouped_filenames[sample].append(filename.name)
     group_to_spacegroup[sample] = space_group
 
   grouped_filenames = dict(grouped_filenames)
@@ -64,55 +62,48 @@ def test_combined_bicubic(
   num_correct, num_topk_correct = 0, 0
   outcomes = []
 
-  with concurrent.futures.ProcessPoolExecutor() as exc:
-    it = tqdm.tqdm(grouped_filenames.items())
-    for group, filenames in it:
-      space_group = group_to_spacegroup[group]
+  it = tqdm.tqdm(grouped_filenames.items())
+  for group, filenames in it:
+    space_group = group_to_spacegroup[group]
 
-      images = []
-      for filename in filenames:
-        fullpath = str(img_path/filedir/filename)
-        images.append(PIL.Image.open(fullpath).convert('L'))
+    images = []
+    for filename in filenames:
+      fullpath = str(img_path/filedir/filename)
+      images.append(PIL.Image.open(fullpath).convert('L'))
 
-      futures = []
-      for img in images:
-        for angle in range(0, 360, rotate_deg):
-          f = exc.submit(_make_tensor_for_test, img, angle)
-          futures.append(f)
-      tensors = []
-      for f in concurrent.futures.as_completed(futures):
-        tensor = f.result()
-        tensors.append(tensor)
+    tensors = []
+    for img in images:
+      tensors.append(torchvision.transforms.functional.to_tensor(img))
 
-      m.eval()
-      with torch.no_grad():
-        out = m(torch.stack(tensors).to(model_device))
-        argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=topk)
-        # If we take the log before mean, then we effectively multiply
-        # the softmax probabilities together.
-        # Empirically, this does not work as well as the above.
-        # argmax_topk = F.softmax(out, dim=1).log().mean(dim=0).topk(k=topk)
+    m.eval()
+    with torch.no_grad():
+      out = m(torch.stack(tensors).to(model_device))
+      argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=topk)
+      # If we take the log before mean, then we effectively multiply
+      # the softmax probabilities together.
+      # Empirically, this does not work as well as the above.
+      # argmax_topk = F.softmax(out, dim=1).log().mean(dim=0).topk(k=topk)
 
-      topk_cats = []
-      for idx in argmax_topk.indices:
-        topk_cats.append(label_manager.get_space_group(idx))
+    topk_cats = []
+    for idx in argmax_topk.indices:
+      topk_cats.append(label_manager.get_space_group(idx))
 
-      if topk_cats[0] == space_group:
-        num_correct += 1
-      if space_group in topk_cats:
-        num_topk_correct += 1
+    if topk_cats[0] == space_group:
+      num_correct += 1
+    if space_group in topk_cats:
+      num_topk_correct += 1
 
-      outcomes.append(PredictionOutcome(
-          sample=group,
-          actual=space_group,
-          predicted=topk_cats[0],
-          topk_values=argmax_topk.values.tolist(),
-          topk_cats=topk_cats
-      ))
+    outcomes.append(PredictionOutcome(
+        sample=group,
+        actual=space_group,
+        predicted=topk_cats[0],
+        topk_values=argmax_topk.values.tolist(),
+        topk_cats=topk_cats
+    ))
 
-      accuracy = 100 * (num_correct / len(outcomes))
-      topk_accuracy = 100 * (num_topk_correct / len(outcomes))
-      it.set_description(f"Acc: {accuracy:.02f}% | {topk_accuracy:.02f}%")
+    accuracy = 100 * (num_correct / len(outcomes))
+    topk_accuracy = 100 * (num_topk_correct / len(outcomes))
+    it.set_description(f"Acc: {accuracy:.02f}% | {topk_accuracy:.02f}%")
 
   return outcomes
 
@@ -253,6 +244,7 @@ def train_and_test(
     lsuv_iterations=4,
     use_mixup=True,
     use_cuda=True,
+    use_weighted_cross_entropy=False,
     check_description=False,
 ):
   gc.collect()  # hack to reclaim gpu memory
@@ -273,20 +265,30 @@ def train_and_test(
   if use_cuda: m = m.cuda()
   model.lsuv(m, cbed_data, iterations=lsuv_iterations)
 
+  if use_weighted_cross_entropy:
+    weights = cbed_data.make_cross_entropy_weights()
+    if use_cuda: weights = weights.cuda()
+    loss_fn = functools.partial(F.cross_entropy, weight=weights)
+  else:
+    loss_fn = F.cross_entropy
+
   trainer = training.Trainer(
       comment=f"{data_name}_{tag}",
       description=description,
       cbed_data=cbed_data,
       model=m,
-      loss_fn=F.cross_entropy,
+      loss_fn=loss_fn,
       use_mixup=use_mixup,
   )
+  with open(pathlib.Path(trainer.save_filedir)/'description.txt', 'w') as f:
+    f.write(description)
 
   trainer.train_model(num_epochs, max_lr)
 
   outcomes = test_combined_bicubic(
       cbed_data.img_path, trainer.model, cbed_data.label_manager,
-      rotate_deg=360, test_cbed_slices=data_params.cbed_slices)
+      filter_spacegroups=data_params.filter_spacegroups,
+      test_cbed_slices=data_params.cbed_slices)
 
   outcomes_df = pd.DataFrame(outcomes)
   outcomes_df.to_csv(pathlib.Path(trainer.save_filedir)/'outcomes.csv')
