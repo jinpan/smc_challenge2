@@ -3,12 +3,14 @@ import concurrent
 import dataclasses
 import functools
 import gc
+import io
 import math
 import multiprocessing
 import os
 import pathlib
 import threading
 import queue
+import shutil
 import time
 import typing
 
@@ -570,4 +572,35 @@ def train_and_test(
   outcomes_df.to_csv(pathlib.Path(trainer.save_filedir)/'outcomes.csv')
   outcomes_df.to_json(pathlib.Path(trainer.save_filedir)/'outcomes.json')
 
-  return outcomes
+  return trainer.save_filedir, outcomes
+
+
+def train_and_test_pairwise_task(g1, g2):
+  save_filedir, _ = train_and_test(
+      data.DataParams(
+          'img9', batch_size=512, p_erase=0.8,
+          filter_spacegroups=[g1, g2],
+      ),
+      model.ModelParams(
+          'resnet50',
+          l1_width=20,
+          use_333_input_conv=True,
+          pool_downsample_ident=True,
+      ),
+      tag='15',
+      num_epochs=40, max_lr=2e-2,
+      use_weighted_cross_entropy=True,
+  )
+
+  # load the save_filedir as a bytesIO zip file and return it
+  shutil.make_archive(
+      '/tmp/archive',
+      format='gztar',
+      root_dir=save_filedir,
+  )
+
+  buf = io.BytesIO()
+  with open('/tmp/archive.tar.gz', 'rb') as f:
+    buf.write(f.read())
+  buf.seek(0)
+  return buf
