@@ -116,30 +116,12 @@ def _get_model_and_label_manager(group_to_model, g1, g2):
     return group_to_model[(g2, g1)]
   return None, None
 
-TestBC2Result = collections.namedtuple('TestBC2Result', (
-    'space_group',
-    'main_preds',
-    'main_probs',
-    'm2_preds',
-    'm2_probs',
-))
-
-TestBC2Result2 = collections.namedtuple('TestBC2Result2', (
-    'space_group',
-    'main_preds',  # vector of len 3 (A, B, C), space groups
-    'main_probs',  # vector of len 3 (pA, pB, pC), sum should be 1
-    # in general, N choose 2 of these
-    # TODO: need to figure out ordering for general case
-    'm2_probs',    # vector of len 3 (p(AvB); p(BvC), p(CvA))
-    'debug',
-))
-
-TestBC2Result3 = collections.namedtuple('TestBC2Result3', (
-    'space_group',
-    'main_preds',  # vector of len 4 (A, B, C, D), space groups
-    'main_probs',  # vector of len 4 (pA, pB, pC, pD), sum should be 1
-    # in general, N choose 2 of these
-    'm2_probs',    # map of len 6: {(0, 1): pAvB, (0, 2): pAvC, (0, 3): pAvD, (1, 2): pBvC, ...}
+TestPFResult = collections.namedtuple('TestPFResult', (
+    'sample',
+    'space_group',  # actual label
+    'main_preds',  # vector of len K (A, B, C, ...), space groups
+    'main_probs',  # vector of len K (pA, pB, pC, ...), sum should be 1
+    'm2_probs',    # map of len (K choose 2): {(0, 1): pAvB, (0, 2): pAvC, (1, 2): pBvC, ...}
 ))
 
 
@@ -197,10 +179,9 @@ def test_combined_bicubic2(
     group_to_spacegroup[sample] = space_group
   grouped_filenames = dict(grouped_filenames)
 
-
-  results, results2, results3, results4 = [], [], [], []
+  results_by_k = {2: [], 3: [], 4: [], 5: []}
   num_correct, num_topk_correct, num_its = 0, 0, 0
-  counters = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  counters = [0, 0, 0, 0, 0, 0, 0, 0]
   it = tqdm.tqdm(grouped_filenames.items())
   for group, filenames in it:
     num_its += 1
@@ -216,170 +197,48 @@ def test_combined_bicubic2(
     argmax_topk = F.softmax(out, dim=1).mean(dim=0).topk(k=topk)
     topk_cats = [main_label_manager.get_space_group(idx) for idx in argmax_topk.indices]
 
-    t1, t2, t3, t4, t5 = topk_cats[0], topk_cats[1], topk_cats[2], topk_cats[3], topk_cats[4]
-    if t1 == space_group:
+    if topk_cats[0] == space_group:
       num_correct += 1
 
-    if t1 in filter_spacegroups and t2 in filter_spacegroups and t3 in filter_spacegroups:
-      counters[4] += 1  # number of times the top 3 was represented
-      if t1 == space_group:
-        counters[5] += 1  # number of times the top-1 was correct given that this happened.
+    for k in (2, 3, 4, 5):
+      counter_base = 2 * k - 4
+      main_preds = [topk_cats[i] for i in range(k)]
+      if all(pred in filter_spacegroups for pred in main_preds):
+        counters[counter_base] += 1  # number of times the top-k was represented
+        if main_preds[0] == space_group:
+          counters[counter_base+1] += 1  # number of times the top-1 was correct given that this happened.
 
-      # TODO: Abstract this into something intelligible and scalable to more classes
-      m_a, lm_a = _get_model_and_label_manager(group_to_model, t1, t2)
-      m_b, lm_b = _get_model_and_label_manager(group_to_model, t2, t3)
-      m_c, lm_c = _get_model_and_label_manager(group_to_model, t3, t1)
+        main_probs = [argmax_topk.values[i].item() for i in range(k)]
+        result_kwargs = {
+            'sample': group,
+            'space_group': space_group,
+            'main_preds': main_preds,
+            'main_probs': main_probs,
+            'm2_probs': {}
+        }
+        for idxA, predA in enumerate(main_preds):
+          for idxB, predB in enumerate(main_preds[idxA+1:], start=idxA+1):
+            assert idxA < idxB
 
-      argmax_topk2 = F.softmax(m_a(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
-      topk_cats2 = [lm_a.get_space_group(idx) for idx in argmax_topk2.indices]
-      if topk_cats2[0] == t1:
-        assert topk_cats2[1] == t2
-        p1v2 = argmax_topk2.values[0].item()
-      else:
-        assert topk_cats2[0] == t2
-        p1v2 = argmax_topk2.values[1].item()
+            m2, lm2 = _get_model_and_label_manager(group_to_model, predA, predB)
+            argmax_topk2 = F.softmax(m2(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
+            topk_cats2 = [lm2.get_space_group(idx) for idx in argmax_topk2.indices]
 
-      argmax_topk3 = F.softmax(m_b(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
-      topk_cats3 = [lm_b.get_space_group(idx) for idx in argmax_topk3.indices]
-      if topk_cats3[0] == t2:
-        assert topk_cats3[1] == t3
-        p2v3 = argmax_topk3.values[0].item()
-      else:
-        assert topk_cats3[0] == t3
-        p2v3 = argmax_topk3.values[1].item()
+            assert topk_cats2 in ([predA, predB], [predB, predA])
+            if topk_cats2[0] == predA:
+              pAvB = argmax_topk2.values[0].item()
+            else:
+              pAvB = argmax_topk2.values[1].item()
+            result_kwargs['m2_probs'][(idxA, idxB)] = pAvB
 
-      argmax_topk4 = F.softmax(m_c(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
-      topk_cats4 = [lm_c.get_space_group(idx) for idx in argmax_topk4.indices]
-      if topk_cats4[0] == t3:
-        assert topk_cats4[1] == t1
-        p3v1 = argmax_topk4.values[0].item()
-      else:
-        assert topk_cats4[0] == t1
-        p3v1 = argmax_topk4.values[1].item()
-
-      results2.append(TestBC2Result2(
-          space_group=space_group,
-          main_preds=[t1, t2, t3],
-          main_probs=[argmax_topk.values[0].item(), argmax_topk.values[1].item(), argmax_topk.values[2].item()],
-          # p(1v2), p(2v3), p(3v1)
-          m2_probs=[p1v2, p2v3, p3v1],
-          debug=(argmax_topk2, topk_cats2, argmax_topk3, topk_cats3, argmax_topk4, topk_cats4)
-      ))
-
-    if t1 in filter_spacegroups and t2 in filter_spacegroups and t3 in filter_spacegroups and t4 in filter_spacegroups:
-      counters[6] += 1  # number of times the top 3 was represented
-      if t1 == space_group:
-        counters[7] += 1  # number of times the top-1 was correct given that this happened.
-
-      result_kwargs = {
-          'space_group': space_group,
-          'main_preds': [t1, t2, t3, t4],
-          'main_probs': [
-              argmax_topk.values[0].item(),
-              argmax_topk.values[1].item(),
-              argmax_topk.values[2].item(),
-              argmax_topk.values[3].item(),
-          ],
-          'm2_probs': {}
-      }
-      ts = [t1, t2, t3, t4]
-      for idx, tA in enumerate(ts):
-        for tB in ts[idx+1:]: # tA is always before tB
-          idxB = ts.index(tB)
-          assert idx < idxB
-
-          m2, lm2 = _get_model_and_label_manager(group_to_model, tA, tB)
-
-          argmax_topk2 = F.softmax(m2(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
-          topk_cats2 = [lm2.get_space_group(idx) for idx in argmax_topk2.indices]
-          if topk_cats2[0] == tA:
-            assert topk_cats2[1] == tB
-            pAvB = argmax_topk2.values[0].item()
-          else:
-            assert topk_cats2[0] == tB
-            pAvB = argmax_topk2.values[1].item()
-
-          result_kwargs['m2_probs'][(idx, idxB)] = pAvB
-
-      results3.append(TestBC2Result3(**result_kwargs))
-
-    if t1 in filter_spacegroups and t2 in filter_spacegroups and t3 in filter_spacegroups and t4 in filter_spacegroups and t5 in filter_spacegroups:
-      counters[8] += 1  # number of times the top 4 was represented
-      if t1 == space_group:
-        counters[9] += 1  # number of times the top-1 was correct given that this happened.
-
-      result_kwargs = {
-          'space_group': space_group,
-          'main_preds': [t1, t2, t3, t4, t5],
-          'main_probs': [
-              argmax_topk.values[0].item(),
-              argmax_topk.values[1].item(),
-              argmax_topk.values[2].item(),
-              argmax_topk.values[3].item(),
-              argmax_topk.values[4].item(),
-          ],
-          'm2_probs': {}
-      }
-      ts = [t1, t2, t3, t4, t5]
-      for idx, tA in enumerate(ts):
-        for tB in ts[idx+1:]: # tA is always before tB
-          idxB = ts.index(tB)
-          assert idx < idxB
-
-          m2, lm2 = _get_model_and_label_manager(group_to_model, tA, tB)
-
-          argmax_topk2 = F.softmax(m2(tensors), dim=1).mean(dim=0).cpu().topk(k=2)
-          topk_cats2 = [lm2.get_space_group(idx) for idx in argmax_topk2.indices]
-          if topk_cats2[0] == tA:
-            assert topk_cats2[1] == tB
-            pAvB = argmax_topk2.values[0].item()
-          else:
-            assert topk_cats2[0] == tB
-            pAvB = argmax_topk2.values[1].item()
-
-          result_kwargs['m2_probs'][(idx, idxB)] = pAvB
-      results4.append(TestBC2Result3(**result_kwargs))
-
-    m2, lm2 = _get_model_and_label_manager(group_to_model, t1, t2)
-    if m2 is not None:
-      counters[0] += 1  # number of times the correct group was in the top 2 (6539)
-      if t1 == space_group:
-        counters[1] += 1  # given counters[0], number of times the main model got it right (4719)
-
-      argmax_topk2 = F.softmax(m2(tensors), dim=1).mean(dim=0).topk(k=2)
-      topk_cats2 = [lm2.get_space_group(idx) for idx in argmax_topk2.indices]
-      u1, u2 = topk_cats2[0], topk_cats2[1]
-      if u1 == space_group:
-        counters[2] += 1  # number of times the auxiliary model got it right by itself (4428)
-
-      if t1 == u1:
-        assert t2 == u2
-        p0 = argmax_topk.values[0].item() * argmax_topk2.values[0].item()
-        p1 = argmax_topk.values[1].item() * argmax_topk2.values[1].item()
-      else:  # t1 != u1
-        assert t2 != u2
-        p0 = argmax_topk.values[0].item() * argmax_topk2.values[1].item()
-        p1 = argmax_topk.values[1].item() * argmax_topk2.values[0].item()
-
-      if p0 > p1: est = t1
-      else: est = t2
-      if est == space_group:
-        counters[3] += 1  # number of times the joint prediction got it right
-
-      results.append(TestBC2Result(
-          space_group=space_group,
-          main_preds=[t1, t2],
-          main_probs=[argmax_topk.values[0].item(), argmax_topk.values[1].item()],
-          m2_preds=[u1, u2],
-          m2_probs=[argmax_topk2.values[0].item(), argmax_topk2.values[1].item()],
-      ))
+        results_by_k[k].append(TestPFResult(**result_kwargs))
 
     if space_group in topk_cats: num_topk_correct += 1
     accuracy = 100 * (num_correct / num_its)
     topk_accuracy = 100 * (num_topk_correct / num_its)
     it.set_description(f"Acc: {accuracy:.02f}% | {topk_accuracy:.02f}% | {counters}")
 
-  return results, results2, results3, results4
+  return results_by_k
 
 
 class CombinedBicubicTester:
@@ -587,9 +446,9 @@ def train_and_test_pairwise_task(g1, g2):
           use_333_input_conv=True,
           pool_downsample_ident=True,
       ),
-      tag='15',
+      tag='16',
       num_epochs=40, max_lr=2e-2,
-      use_weighted_cross_entropy=True,
+      # use_weighted_cross_entropy=True,
   )
 
   # load the save_filedir as a bytesIO zip file and return it
