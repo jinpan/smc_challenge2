@@ -121,8 +121,8 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
         if filter_spacegroups is not None and int(space_group) not in filter_spacegroups:
           continue
 
-      filenames.append(filename)
-      raw_labels.append(space_group)
+        filenames.append(filename)
+        raw_labels.append(space_group)
 
     mappings = label_manager.get_label_mappings(set(raw_labels))
 
