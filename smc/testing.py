@@ -434,7 +434,7 @@ def train_and_test(
   return trainer.save_filedir, outcomes
 
 
-def train_and_test_pairwise_task(g1, g2, train_with_validation=False):
+def train_and_test_pairwise_task(g1, g2, train_with_validation=False, tag='15'):
   save_filedir, _ = train_and_test(
       data.DataParams(
           'img9', batch_size=512, p_erase=0.8,
@@ -447,9 +447,9 @@ def train_and_test_pairwise_task(g1, g2, train_with_validation=False):
           use_333_input_conv=True,
           pool_downsample_ident=True,
       ),
-      tag='16',
+      tag=tag,
       num_epochs=40, max_lr=2e-2,
-      # use_weighted_cross_entropy=True,
+      use_weighted_cross_entropy=True,
   )
 
   # load the save_filedir as a bytesIO zip file and return it
