@@ -434,11 +434,12 @@ def train_and_test(
   return trainer.save_filedir, outcomes
 
 
-def train_and_test_pairwise_task(g1, g2):
+def train_and_test_pairwise_task(g1, g2, train_with_validation=False):
   save_filedir, _ = train_and_test(
       data.DataParams(
           'img9', batch_size=512, p_erase=0.8,
           filter_spacegroups=[g1, g2],
+          train_with_validation=train_with_validation,
       ),
       model.ModelParams(
           'resnet50',

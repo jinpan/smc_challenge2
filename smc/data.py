@@ -102,7 +102,7 @@ class LabelManager:
 class CbedImageCacheDataset(torch.utils.data.Dataset):
   _spacegroup_re = re.compile(r'.*\.(0|1|2)\.(\d{1,3})\.png$')
 
-  def __init__(self, root, label_manager, image_loader_fn,
+  def __init__(self, roots, label_manager, image_loader_fn,
                filter_spacegroups=None,
                cbed_slices=('0','1','2'), lazy=True):
     self._filenames = []
@@ -113,12 +113,13 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
     raw_labels = []
     filenames = []
 
-    for filename in root.glob('*.png'):
-      m = utils.must_match(self._spacegroup_re, filename.name)
-      cbed_slice, space_group = m.group(1), m.group(2)
-      if cbed_slice not in cbed_slices: continue
-      if filter_spacegroups is not None and int(space_group) not in filter_spacegroups:
-        continue
+    for root in roots:
+      for filename in root.glob('*.png'):
+        m = utils.must_match(self._spacegroup_re, filename.name)
+        cbed_slice, space_group = m.group(1), m.group(2)
+        if cbed_slice not in cbed_slices: continue
+        if filter_spacegroups is not None and int(space_group) not in filter_spacegroups:
+          continue
 
       filenames.append(filename)
       raw_labels.append(space_group)
@@ -156,9 +157,9 @@ class CbedImageCacheDataset(torch.utils.data.Dataset):
 
 
 class CbedDataset(torch.utils.data.Dataset):
-  def __init__(self, root, label_manager, image_loader_fn, cbed_slices, transform, filter_spacegroups):
+  def __init__(self, roots, label_manager, image_loader_fn, cbed_slices, transform, filter_spacegroups):
     self._image_cache = CbedImageCacheDataset(
-        root, label_manager, image_loader_fn, filter_spacegroups, cbed_slices=cbed_slices)
+        roots, label_manager, image_loader_fn, filter_spacegroups, cbed_slices=cbed_slices)
 
     self._transform = transform
 
@@ -190,6 +191,7 @@ class DataParams:
   rotation_interpolation: utils.RotationInterpolation = None
   chans: str = 'L'
   filter_spacegroups: typing.Optional[typing.Container[int]] = None
+  train_with_validation: bool = False
 
 class CbedData:
   def __init__(self,
@@ -223,8 +225,17 @@ class CbedData:
 
     train_transforms.append(torchvision.transforms.RandomErasing(p=params.p_erase))
 
+
+    train_paths = [self.img_path/'train']
+    valid_paths = []
+    if params.train_with_validation:
+      train_paths.append(self.img_path/'valid')
+      valid_paths.append(self.img_path/'test')
+    else:
+      valid_paths.append(self.img_path/'valid')
+
     self._train_set = CbedDataset(
-        self.img_path/'train',
+        train_paths,
         self.label_manager,
         image_loader_fn,
         cbed_slices=params.cbed_slices,
@@ -233,7 +244,7 @@ class CbedData:
     )
     self.label_manager.freeze()
     self._valid_set = CbedDataset(
-        self.img_path/'valid',
+        valid_paths,
         self.label_manager,
         image_loader_fn,
         cbed_slices=params.cbed_slices,
